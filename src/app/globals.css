@@ -1,0 +1,301 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   POPO — retrieval console
+   Aesthetic: "warm archival instrument". Deep warm ink, bone type, amber
+   signal. The two retrieval channels are colour-coded and that coding is
+   load-bearing: amber = dense/vector, cyan = sparse/keyword. Anywhere those
+   hues appear they mean the same thing.
+   ========================================================================== */
+
+@theme {
+  /* --- surfaces: warm blacks, never blue-grey --- */
+  --color-ink-950: #080706;
+  --color-ink-900: #0d0b09;
+  --color-ink-850: #12100d;
+  --color-ink-800: #181410;
+  --color-ink-750: #1e1915;
+  --color-ink-700: #26201a;
+  --color-ink-600: #332b23;
+  --color-ink-500: #453a30;
+
+  /* --- type: bone, not white --- */
+  --color-bone-100: #f5efe4;
+  --color-bone-200: #ded5c6;
+  --color-bone-300: #bbb0a0;
+  --color-bone-400: #91867a;
+  --color-bone-500: #6d6459;
+  --color-bone-600: #4e473f;
+
+  /* --- channel semantics --- */
+  --color-dense: #f2a65a; /* vector / embedding similarity */
+  --color-dense-dim: #7a542c;
+  --color-sparse: #63c7d6; /* keyword / tsvector BM25 */
+  --color-sparse-dim: #2c5f68;
+  --color-fused: #f5efe4; /* post-RRF ranking */
+
+  /* --- state --- */
+  --color-signal: #a8cf7a;
+  --color-alert: #e2725b;
+  --color-caution: #dcae4a;
+
+  /* --- fonts wired from next/font in layout.tsx --- */
+  --font-display: var(--font-instrument), ui-serif, Georgia, serif;
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --radius-panel: 3px;
+
+  --ease-out-instrument: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+* {
+  border-color: var(--color-ink-700);
+  min-width: 0;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-ink-900);
+  color: var(--color-bone-200);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv05";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden; /* the console owns its own scroll regions */
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-dense) 30%, transparent);
+  color: var(--color-bone-100);
+}
+
+/* ==========================================================================
+   Atmosphere — grain + dot grid. Both fixed, both non-interactive.
+   The grain is a single inlined feTurbulence; no image request.
+   ========================================================================== */
+
+.atmos-grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.dot-grid {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    color-mix(in oklab, var(--color-bone-600) 34%, transparent) 1px,
+    transparent 0
+  );
+  background-size: 22px 22px;
+}
+
+/* Warm bloom behind the console, as if the instrument is lit from within. */
+.bloom::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      70ch 40ch at 18% -10%,
+      color-mix(in oklab, var(--color-dense) 7%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      60ch 40ch at 96% 108%,
+      color-mix(in oklab, var(--color-sparse) 5%, transparent),
+      transparent 70%
+    );
+}
+
+/* ==========================================================================
+   Typography helpers
+   ========================================================================== */
+
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.012em;
+}
+
+/* Small caps label — used for every panel header and field label. */
+.label-micro {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-bone-500);
+}
+
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Scrollbars — thin, warm, only visible on hover of the scroll region
+   ========================================================================== */
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-600) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 99px;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-500);
+  background-clip: content-box;
+}
+
+/* ==========================================================================
+   Range input — one styled slider, reused by every retrieval control.
+   Channel tint is passed in via --track-accent.
+   ========================================================================== */
+
+.slider-instrument {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: ew-resize;
+}
+.slider-instrument::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--color-ink-600);
+}
+.slider-instrument::-moz-range-track {
+  height: 2px;
+  background: var(--color-ink-600);
+}
+.slider-instrument::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 14px;
+  width: 3px;
+  margin-top: -6px;
+  border-radius: 0;
+  background: var(--track-accent, var(--color-dense));
+  box-shadow: 0 0 10px color-mix(in oklab, var(--track-accent, var(--color-dense)) 60%, transparent);
+  transition: height 140ms var(--ease-out-instrument);
+}
+.slider-instrument:hover::-webkit-slider-thumb,
+.slider-instrument:focus-visible::-webkit-slider-thumb {
+  height: 20px;
+  margin-top: -9px;
+}
+.slider-instrument::-moz-range-thumb {
+  height: 14px;
+  width: 3px;
+  border: none;
+  border-radius: 0;
+  background: var(--track-accent, var(--color-dense));
+}
+.slider-instrument:focus-visible {
+  outline: none;
+}
+
+/* ==========================================================================
+   Motion
+   ========================================================================== */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sweep {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes caret {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.animate-rise {
+  animation: rise 520ms var(--ease-out-instrument) both;
+}
+
+/* Score bars grow from the left on mount. */
+.animate-sweep {
+  transform-origin: left;
+  animation: sweep 720ms var(--ease-out-instrument) both;
+}
+
+.stream-caret::after {
+  content: "▌";
+  margin-left: 1px;
+  color: var(--color-dense);
+  animation: caret 1s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================================
+   Focus — a bracket, not a glow ring. Fits the instrument language.
+   ========================================================================== */
+
+:focus-visible {
+  outline: 1px solid var(--color-dense);
+  outline-offset: 2px;
+}
