@@ -48,9 +48,16 @@ Seed the demo tenant and ask the same question as `alice@acme.test` and
 
 ## Layout
 
+Two deployables that share nothing but an HTTP contract. The backend owns the
+schema, every credential, and the whole `api/` tree; the frontend knows one
+thing about it, `NEXT_PUBLIC_ATLAS_API`. Either can be deployed, scaled or
+rolled back without the other.
+
 ```
-db/migrations/     numbered SQL — the schema is the source of truth
-api/               FastAPI service: ingestion, retrieval, workers
+api/               FastAPI service — its own project, its own .env
+  pyproject.toml   uv-managed; uv.lock is committed
+  .env.example     database, model and connector credentials
+  db/migrations/   numbered SQL — the schema is the source of truth
   atlas/
     config.py      settings, read once
     db.py          asyncpg pool
@@ -58,11 +65,12 @@ api/               FastAPI service: ingestion, retrieval, workers
     llm/           provider abstraction (Gemini / OpenAI / Anthropic)
     ingest/        extract -> chunk -> hash -> pipeline
     jobs/          Postgres queue + worker process
-    connectors/    upload, web, GitHub
+    connectors/    upload, web, GitHub, Slack, Notion, Drive, Jira
     retrieval/     hybrid search, rerank, context, citations
     routers/       the HTTP surface
-  scripts/         migrate.py, seed.py
-src/               Next.js frontend (chat, corpus, debugger)
+    scripts/       migrate, seed
+src/               Next.js frontend — landing, chat, connectors, corpus, debugger
+.env.example       one variable: where the API is
 ```
 
 ## Setup
@@ -70,46 +78,64 @@ src/               Next.js frontend (chat, corpus, debugger)
 **1 — Supabase.** Create a project. The migrations enable `vector`, `pg_trgm`
 and `pgcrypto` themselves.
 
-**2 — Environment.**
+**2 — Backend environment.**
 
 ```bash
-cp .env.example .env.local
+cp api/.env.example api/.env
 ```
 
-Fill in `DATABASE_URL` (Supabase → Settings → Database → URI, **session pooler on
-port 5432**), one provider key, and `ATLAS_SESSION_SECRET`.
+Fill in `DATABASE_URL` (Supabase → Settings → Database → URI, **session pooler
+on port 5432**), `GEMINI_API_KEY`, and `ATLAS_SESSION_SECRET`. Gemini is the
+default for both generation and embedding, so one key is enough to run
+everything.
 
 > The transaction pooler on 6543 cannot hold the migrator's advisory lock and
 > breaks the job queue's `SELECT … FOR UPDATE SKIP LOCKED`. Use 5432.
 
-**3 — Backend.**
+**3 — Backend dependencies.** [uv](https://docs.astral.sh/uv/) manages the
+Python version, the virtualenv and the lockfile:
 
 ```bash
-cd api && python -m venv .venv && .venv/Scripts/activate && pip install -e ".[dev]"
+cd api && uv sync
 ```
+
+There is nothing to activate. `uv run` uses the project's environment, and
+`uv.lock` pins every transitive dependency, so a fresh clone resolves to the
+same tree.
 
 **4 — Migrate and seed.**
 
 ```bash
-cd api && python -m scripts.migrate && python -m scripts.seed
+cd api && uv run atlas-migrate && uv run atlas-seed
 ```
 
-**5 — Run.** Three processes:
+**5 — Run.** Three processes, in three terminals:
 
 ```bash
-cd api && uvicorn atlas.main:app --reload --port 8000
+cd api && uv run uvicorn atlas.main:app --reload --port 8000
 ```
 
 ```bash
-cd api && python -m atlas.jobs.worker
+cd api && uv run atlas-worker
 ```
 
 ```bash
 npm install && npm run dev
 ```
 
+The frontend defaults to `http://localhost:8000`; set `NEXT_PUBLIC_ATLAS_API` in
+`.env.local` to point it elsewhere, and add that origin to `ATLAS_CORS_ORIGINS`
+in `api/.env`. A mismatch between those two shows up as every request failing
+preflight, not as a clean error.
+
 API docs at `http://localhost:8000/docs`; `GET /health` reports which half of
 the configuration is wrong when something is.
+
+**Deploying them apart.** The backend is a container that runs `uv run
+atlas-api` (it reads `PORT`) plus a second one running `uv run atlas-worker`
+against the same database. The frontend is a standard Next.js build on any
+static/edge host. The only wiring between them is `NEXT_PUBLIC_ATLAS_API` and
+`ATLAS_CORS_ORIGINS`.
 
 ---
 
@@ -178,8 +204,12 @@ Built and compiling:
 - Type-aware chunking (prose / code / conversation) with breadcrumbs
 - Incremental indexing via content hash + parser/chunker/embedding versions
 - Durable queue, leases, backoff, dead letter, crash reclamation
-- Connectors: upload, web, GitHub (single-call tree walk, commit-sha cursor)
+- Connectors: upload, web, GitHub (single-call tree walk, commit-sha cursor),
+  Slack (thread-shaped documents), Notion (blocks back to Markdown), Google
+  Drive (native exports + binary download), Jira (issue plus comments)
 - Chat with NDJSON streaming, trace-before-tokens, citation extraction
+- Frontend: landing, chat with source-glyph citations, connector management,
+  corpus table, retrieval debugger in a drawer
 
 Scaffolded but not yet built — the schema is in place, the code is not:
 
@@ -192,8 +222,13 @@ Scaffolded but not yet built — the schema is in place, the code is not:
   is not wired up, so cost and p95 are per-request only
 - **Query planning / agentic retrieval** — budget caps are in `config.py`, the
   loop is not written
-- Notion, Slack, Jira connectors
-- Frontend beyond the Next.js scaffold
+- Linear, Confluence and Figma connectors — not in the `source_kind` enum, and
+  the UI says so rather than pretending
 
-No end-to-end run has happened yet: it compiles, but nothing has been executed
-against a live Supabase project or a real provider key.
+Each connector accepts one documented limit, stated in its module docstring
+rather than left to be discovered: Slack does not see new replies to old
+threads, and Drive and Notion do not detect deletions.
+
+No end-to-end run has happened yet. It imports, lints and type-checks, but
+nothing has been executed against a live Supabase project or a real provider
+key.

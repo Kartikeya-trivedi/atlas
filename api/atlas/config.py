@@ -1,7 +1,9 @@
 """Configuration, read once and validated.
 
-The repo root holds a single `.env.local`, shared with the Next.js frontend, so
-there is one place to put a key rather than two that drift.
+The service owns its own environment. `api/.env` is the backend's, and nothing
+outside `api/` is read — the frontend is a separate deployable with a separate
+`.env.local`, and the only thing it needs to know is the API's URL. Sharing one
+env file across both meant every frontend deploy carried the database password.
 """
 
 from __future__ import annotations
@@ -13,19 +15,20 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _repo_root() -> Path:
+def _service_root() -> Path:
     """Walk up from this file until a directory holding db/migrations is found."""
     here = Path(__file__).resolve()
     for parent in here.parents:
         if (parent / "db" / "migrations").is_dir():
             return parent
-    # Running from a wheel with no repo around it: fall back to the package's
-    # grandparent so an explicit DATABASE_URL in the environment still works.
-    return here.parents[2]
+    # Installed as a wheel with no source tree around it: fall back to the
+    # package's parent so an explicit DATABASE_URL in the environment works and
+    # only the migrator is affected.
+    return here.parents[1]
 
 
-REPO_ROOT = _repo_root()
-MIGRATIONS_DIR = REPO_ROOT / "db" / "migrations"
+SERVICE_ROOT = _service_root()
+MIGRATIONS_DIR = SERVICE_ROOT / "db" / "migrations"
 
 
 class ConfigError(RuntimeError):
@@ -33,8 +36,10 @@ class ConfigError(RuntimeError):
 
 
 class Settings(BaseSettings):
+    # Later files win, so `.env.local` overrides a committed `.env` — the
+    # convention Next.js uses on the other side of the wire.
     model_config = SettingsConfigDict(
-        env_file=(REPO_ROOT / ".env.local", REPO_ROOT / ".env"),
+        env_file=(SERVICE_ROOT / ".env", SERVICE_ROOT / ".env.local"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -82,6 +87,16 @@ class Settings(BaseSettings):
     max_query_cost_usd: float = Field(default=0.25, alias="ATLAS_MAX_QUERY_COST_USD")
     max_query_ms: int = Field(default=90_000, alias="ATLAS_MAX_QUERY_MS")
 
+    # ── http ──────────────────────────────────────────────────────────────
+    # The frontend is a different origin in every environment, not just in
+    # development, so this is configuration rather than a constant. Credentials
+    # are allowed because the session is a cookie, and that rules out "*".
+    cors_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:3400,http://127.0.0.1:3400",
+        alias="ATLAS_CORS_ORIGINS",
+    )
+
     # ── worker ────────────────────────────────────────────────────────────
     worker_concurrency: int = Field(default=4, alias="ATLAS_WORKER_CONCURRENCY")
     worker_poll_ms: int = Field(default=1000, alias="ATLAS_WORKER_POLL_MS")
@@ -102,6 +117,10 @@ class Settings(BaseSettings):
     # Free-form price overrides, so a provider price change needs no deploy.
     # JSON: {"model-id": {"in": 1.23, "out": 4.56}}
     price_overrides: str | None = Field(default=None, alias="ATLAS_PRICE_OVERRIDES")
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def configured_providers(self) -> dict[str, bool]:

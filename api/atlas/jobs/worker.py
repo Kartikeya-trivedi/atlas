@@ -173,6 +173,16 @@ async def main() -> None:
         await close_pool()
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console entrypoint: `uv run atlas-worker`.
+
+    Ctrl-C is how a worker is normally stopped, not a crash — the signal
+    handlers above have already released whatever was in flight by the time it
+    reaches here.
+    """
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

@@ -25,7 +25,18 @@ dependencies = [
     "python-docx>=1.1.2",
 ]
 
-[project.optional-dependencies]
+[project.scripts]
+# Three processes, three entrypoints. `uv run atlas-migrate` beats remembering
+# which directory a loose script has to be invoked from.
+atlas-api = "atlas.main:run"
+atlas-worker = "atlas.jobs.worker:run"
+atlas-migrate = "atlas.scripts.migrate:run"
+atlas-seed = "atlas.scripts.seed:run"
+
+# PEP 735 rather than an optional-dependencies extra: `uv sync` installs this
+# group by default, so a fresh clone gets ruff and pytest with no flag, while
+# `uv sync --no-dev` gives a production image only what it needs.
+[dependency-groups]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",

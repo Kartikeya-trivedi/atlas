@@ -54,12 +54,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The Next.js frontend is a separate origin in development. Credentials are
-# allowed because the session is a cookie; that requires an explicit origin list
-# rather than "*", which is why this is not a wildcard.
+# The frontend is a separate deployable on a separate origin, so this is
+# configuration (ATLAS_CORS_ORIGINS) rather than a constant. Credentials are
+# allowed because the session is a cookie, and the CORS spec rejects "*"
+# alongside credentials — an explicit list is the only thing that works.
+#
+# Read defensively: a broken .env must not cost us CORS too, or the frontend
+# cannot even reach /health to find out what is wrong.
+try:
+    _origins = settings().allowed_origins
+except Exception:  # noqa: BLE001 — /health is the diagnostic; keep it reachable
+    _origins = ["http://localhost:3000", "http://localhost:3400"]
+    log.exception("could not read ATLAS_CORS_ORIGINS; falling back to localhost")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -96,6 +106,25 @@ app.include_router(documents.router)
 app.include_router(sources.router)
 app.include_router(search.router)
 app.include_router(chat.router)
+
+
+def run() -> None:
+    """Console entrypoint: `uv run atlas-api`.
+
+    PORT rather than a flag, because every managed host (Railway, Render, Fly,
+    Cloud Run) injects it and a hardcoded port makes the container unroutable.
+    Reload is off here — that is a development choice, made explicitly with
+    `uv run uvicorn atlas.main:app --reload`.
+    """
+    import os
+
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host=os.getenv("HOST", "0.0.0.0"),  # noqa: S104 — containers bind all
+        port=int(os.getenv("PORT", "8000")),
+    )
 
 
 @app.get("/")
