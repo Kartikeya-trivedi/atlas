@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { api, type HealthReport } from "@/lib/api";
 
 const NAV = [
-  { href: "/", label: "Ask", hint: "Retrieve and answer" },
+  { href: "/ask", label: "Ask", hint: "Retrieve and answer" },
   { href: "/debug", label: "Debug", hint: "Inspect retrieval" },
   { href: "/corpus", label: "Corpus", hint: "Documents and sources" },
 ] as const;
@@ -21,6 +21,11 @@ const NAV = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
+  // The landing page carries its own nav and needs the full viewport width.
+  // Wrapping it in app chrome would frame a marketing page like a settings
+  // screen, which is exactly the wrong first impression.
+  if (pathname === "/") return <>{children}</>;
+
   return (
     <div className="relative z-10 flex min-h-screen">
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-[212px] flex-col border-r border-line bg-[rgba(9,10,13,0.72)] backdrop-blur-xl md:flex">
@@ -33,8 +38,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <nav className="flex flex-col gap-0.5 px-3 pt-2">
           {NAV.map((item, i) => {
-            const active =
-              item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+            const active = pathname.startsWith(item.href);
             return (
               <Link
                 key={item.href}
