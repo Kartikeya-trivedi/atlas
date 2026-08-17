@@ -1,15 +1,16 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Sans, JetBrains_Mono } from "next/font/google";
+import { Instrument_Sans, JetBrains_Mono, Newsreader } from "next/font/google";
 import { AppShell } from "@/components/AppShell";
 import "./globals.css";
 
 /**
- * Instrument Sans for the interface, JetBrains Mono for anything numeric.
+ * Three faces, three jobs.
  *
- * The split is not decorative. This is a retrieval console: scores, ranks,
- * latencies and identifiers sit in columns that have to be scannable, and
- * proportional digits in a score column make the eye re-find the decimal point
- * on every row.
+ * Instrument Sans runs the interface. JetBrains Mono takes anything numeric —
+ * scores, latencies, chunk counts sit in columns that have to be scannable, and
+ * proportional digits make the eye re-find the decimal point on every row.
+ * Newsreader Italic appears exactly once per heading, on one word, and nowhere
+ * in body copy: it is a warm note against the sans, not a second voice.
  */
 const sans = Instrument_Sans({
   subsets: ["latin"],
@@ -24,14 +25,22 @@ const mono = JetBrains_Mono({
   weight: ["400", "500"],
 });
 
+const serif = Newsreader({
+  subsets: ["latin"],
+  variable: "--font-newsreader",
+  display: "swap",
+  style: "italic",
+  weight: ["500"],
+});
+
 export const metadata: Metadata = {
-  title: "Atlas",
+  title: "Atlas — ask your company anything",
   description:
-    "Permission-aware hybrid retrieval. Dense and lexical channels, fused, with every ranking decision inspectable.",
+    "Atlas connects Drive, Notion, Slack and GitHub, and answers questions with citations you can check — filtered by what each person is allowed to see.",
 };
 
 export const viewport: Viewport = {
-  themeColor: "#07080a",
+  themeColor: "#060605",
   colorScheme: "dark",
 };
 
@@ -41,7 +50,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+    <html
+      lang="en"
+      className={`${sans.variable} ${mono.variable} ${serif.variable}`}
+    >
       <body>
         <AppShell>{children}</AppShell>
       </body>

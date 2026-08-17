@@ -27,7 +27,7 @@ export function Inspector({ trace }: { trace: RetrievalTrace | null }) {
       <StageChart trace={trace} />
 
       {trace.rewritten_query && (
-        <div className="panel fade p-3">
+        <div className="surface fade p-3">
           <span className="label">Rewritten query</span>
           <p className="mt-1.5 text-sm text-ink-dim">
             <span className="text-ink-ghost line-through">{trace.query}</span>
@@ -66,7 +66,7 @@ export function Inspector({ trace }: { trace: RetrievalTrace | null }) {
           />
         </div>
       ) : (
-        <div className="panel px-4 py-8 text-center">
+        <div className="surface px-4 py-8 text-center">
           <p className="text-sm text-ink-dim">Nothing cleared the threshold.</p>
           <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-ink-ghost">
             Either the corpus does not cover this question, or retrieval is too
@@ -85,7 +85,7 @@ export function Inspector({ trace }: { trace: RetrievalTrace | null }) {
 
 function InspectorEmpty() {
   return (
-    <div className="panel flex min-h-[220px] flex-col items-center justify-center gap-2 px-6 text-center">
+    <div className="surface flex min-h-[220px] flex-col items-center justify-center gap-2 px-6 text-center">
       <div
         className="h-[3px] w-24 rounded-full opacity-40"
         style={{
@@ -139,7 +139,7 @@ function StageChart({ trace }: { trace: RetrievalTrace }) {
   );
 
   return (
-    <div className="panel p-3.5">
+    <div className="surface p-3.5">
       <div className="flex items-baseline justify-between">
         <span className="label">Stages</span>
         <span className="num text-xs text-ink-dim">{formatMs(total)}</span>
@@ -147,7 +147,7 @@ function StageChart({ trace }: { trace: RetrievalTrace }) {
 
       {/* Single stacked track: proportions are the message, and stacking makes
           the dominant stage obvious without reading a single number. */}
-      <div className="mt-2.5 flex h-1.5 gap-px overflow-hidden rounded-full bg-[rgba(255,255,255,0.04)]">
+      <div className="mt-2.5 flex h-1.5 gap-px overflow-hidden rounded-full bg-[rgba(255,250,240,0.05)]">
         {stages.map((s, i) => (
           <div
             key={s.key}
@@ -202,7 +202,7 @@ function Column({ title, note, tone, chunks, score, rank, showBias }: ColumnProp
         : "linear-gradient(90deg, var(--color-dense), var(--color-lexical))";
 
   return (
-    <section className="panel flex min-w-0 flex-col">
+    <section className="surface flex min-w-0 flex-col">
       <header className="flex items-baseline justify-between border-b border-line px-3 py-2.5">
         <div className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full" style={{ background: accent }} />
@@ -273,7 +273,7 @@ function ChunkRow({
 
   return (
     <article
-      className="rise rounded-[7px] border border-transparent px-2 py-2 transition-colors duration-150 hover:border-line hover:bg-[rgba(255,255,255,0.022)]"
+      className="rise rounded-[7px] border border-transparent px-2 py-2 transition-colors duration-150 hover:border-line hover:bg-[rgba(255,250,240,0.025)]"
       style={{ animationDelay: `${Math.min(index * 30, 240)}ms` }}
     >
       <button
@@ -324,7 +324,7 @@ function ChunkRow({
       )}
 
       {open && (
-        <pre className="fade mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-line bg-void px-2.5 py-2 font-mono text-2xs leading-relaxed text-ink-dim">
+        <pre className="fade mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-line bg-deep px-2.5 py-2 font-mono text-2xs leading-relaxed text-ink-dim">
           {chunk.content}
         </pre>
       )}
@@ -349,7 +349,7 @@ function Totals({ trace }: { trace: RetrievalTrace }) {
   return (
     <div className="grid grid-cols-2 gap-px overflow-hidden rounded-[13px] border border-line bg-line sm:grid-cols-4">
       {cells.map((c) => (
-        <div key={c.label} className="bg-surface px-3 py-2.5">
+        <div key={c.label} className="bg-s1 px-3 py-2.5">
           <span className="label">{c.label}</span>
           <p className="num mt-0.5 text-sm text-ink">{c.value}</p>
         </div>

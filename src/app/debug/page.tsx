@@ -89,8 +89,8 @@ export default function DebugPage() {
           <Controls params={params} onCommit={commit} disabled={busy} />
 
           {error && (
-            <div className="fade mt-4 rounded-[9px] border border-[rgba(217,83,79,0.28)] bg-[rgba(217,83,79,0.07)] px-3.5 py-2.5">
-              <p className="text-xs text-[#e8a19e]">{error}</p>
+            <div className="fade mt-4 rounded-[9px] border border-[rgba(224,115,109,0.28)] bg-[rgba(224,115,109,0.07)] px-3.5 py-2.5">
+              <p className="text-xs text-[#eda6a1]">{error}</p>
             </div>
           )}
 
@@ -113,7 +113,7 @@ function Controls({
   disabled: boolean;
 }) {
   return (
-    <div className="panel mt-4 p-4">
+    <div className="surface mt-4 p-4">
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         <Slider
           label="α"
@@ -233,7 +233,7 @@ function Slider({
         onChange={(e) => setDraft(Number(e.target.value))}
         onPointerUp={(e) => onCommit(Number(e.currentTarget.value))}
         onKeyUp={(e) => onCommit(Number(e.currentTarget.value))}
-        className="h-1 w-full cursor-pointer appearance-none rounded-full outline-none [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-line-glow [&::-webkit-slider-thumb]:bg-ink"
+        className="h-1 w-full cursor-pointer appearance-none rounded-full outline-none [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-line-lit [&::-webkit-slider-thumb]:bg-ink"
         style={{
           // α gets the channel gradient itself: the control looks like the thing
           // it controls, so which way to drag needs no explaining.
@@ -266,7 +266,7 @@ function Toggle({
       onClick={() => onChange(!on)}
       disabled={disabled}
       title={hint}
-      className={`btn ${on ? "border-accent bg-[rgba(94,106,210,0.14)] text-ink" : ""}`}
+      className={`btn ${on ? "border-accent bg-[rgba(124,137,255,0.14)] text-ink" : ""}`}
     >
       <span
         className={`h-1.5 w-1.5 rounded-full ${on ? "bg-accent" : "bg-ink-ghost"}`}

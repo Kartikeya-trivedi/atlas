@@ -120,6 +120,30 @@ export interface CorpusCounts {
   failed: number;
 }
 
+/**
+ * A row of `sources`, as the API hands it back.
+ *
+ * `config` arrives with every credential-shaped key stripped server-side.
+ * `credentials` names which ones are set — the UI can say "token set" without
+ * a secret ever reaching the browser.
+ */
+export interface SourceRow {
+  id: string;
+  kind: string;
+  name: string;
+  config: Record<string, unknown>;
+  credentials: string[];
+  has_token: boolean;
+  cursor: Record<string, unknown>;
+  default_acl_groups: string[];
+  default_acl_public: boolean;
+  status: "idle" | "queued" | "syncing" | "error" | string;
+  last_sync_at: string | null;
+  last_error: string | null;
+  document_count: number;
+  created_at: string;
+}
+
 export interface HealthReport {
   ok: boolean;
   config: { ok: boolean; error?: string; providers?: Record<string, boolean> };
@@ -201,6 +225,27 @@ export const api = {
 
   deleteDocument: (id: string) =>
     request<void>(`/documents/${id}`, { method: "DELETE" }),
+
+  sources: () =>
+    request<{ sources: SourceRow[]; kinds: string[] }>("/sources"),
+
+  createSource: (body: {
+    kind: string;
+    name: string;
+    config: Record<string, unknown>;
+    acl_groups?: string[];
+    acl_public?: boolean;
+  }) =>
+    request<SourceRow>("/sources", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  syncSource: (id: string) =>
+    request<{ queued: boolean; job_id: string | null; already_pending: boolean }>(
+      `/sources/${id}/sync`,
+      { method: "POST" },
+    ),
 
   search: (query: string, params: RetrievalParams) =>
     request<{ trace: RetrievalTrace }>("/search", {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { sourceMeta } from "@/components/icons";
 import {
   ApiError,
   api,
@@ -10,7 +11,7 @@ import {
   type Stage,
 } from "@/lib/api";
 
-/** Ingest stages, in pipeline order. Drives the progress rail on each row. */
+/** Ingest stages, in pipeline order. Drives the progress rail on a live row. */
 const STAGES: Stage[] = [
   "queued",
   "extracting",
@@ -44,7 +45,9 @@ export default function CorpusPage() {
       setCounts(res.counts);
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not load the corpus.");
+      setError(
+        err instanceof ApiError ? err.message : "Could not load the corpus.",
+      );
     }
   }, []);
 
@@ -86,78 +89,97 @@ export default function CorpusPage() {
   );
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-line px-6">
-        <div>
-          <h1 className="text-[0.9rem] font-medium tracking-[-0.015em]">Corpus</h1>
-          <p className="text-2xs text-ink-ghost">What Atlas can retrieve from</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => input.current?.click()}
-          className="btn btn-primary"
-        >
-          Add documents
-        </button>
-        <input
-          ref={input}
-          type="file"
-          multiple
-          hidden
-          accept=".pdf,.docx,.md,.markdown,.txt,.html,.htm,.py,.ts,.tsx,.js,.jsx,.go,.rs,.java,.rb,.sql,.yaml,.yml,.json"
-          onChange={(e) => {
-            if (e.target.files) void upload(e.target.files);
-            e.target.value = "";
-          }}
-        />
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[64rem] px-6 py-6">
-          {counts && <Counters counts={counts} />}
-
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              void upload(e.dataTransfer.files);
-            }}
-            className={`mt-5 rounded-[13px] border border-dashed px-6 py-7 text-center transition-colors duration-150 ${
-              dragging ? "border-accent bg-[rgba(94,106,210,0.06)]" : "border-line-strong"
-            }`}
-          >
-            <p className="text-sm text-ink-dim">
-              {uploading > 0
-                ? `Uploading ${uploading} file${uploading > 1 ? "s" : ""}…`
-                : "Drop files here"}
-            </p>
-            <p className="mt-1 text-2xs text-ink-ghost">
-              PDF, DOCX, Markdown, HTML, plain text, and source code · 20 MB each
-            </p>
+    <div
+      className="min-h-screen"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        void upload(e.dataTransfer.files);
+      }}
+    >
+      <div className="mx-auto w-full max-w-[62rem] px-8 pb-24 pt-14">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="display text-[2.4rem] text-ink">
+              What Atlas can <span className="accent">read</span>.
+            </h1>
+            {counts && (
+              <p className="mt-3 text-sm text-ink-dim">
+                <span className="num text-ink">
+                  {counts.documents.toLocaleString()}
+                </span>{" "}
+                documents, cut into{" "}
+                <span className="num text-ink">
+                  {counts.chunks.toLocaleString()}
+                </span>{" "}
+                passages.{" "}
+                {counts.failed > 0 ? (
+                  <span className="text-warn">
+                    {counts.failed} failed to index.
+                  </span>
+                ) : (
+                  <span className="text-ink-faint">Everything indexed.</span>
+                )}
+              </p>
+            )}
           </div>
 
-          {error && (
-            <div className="fade mt-4 rounded-[9px] border border-[rgba(217,83,79,0.28)] bg-[rgba(217,83,79,0.07)] px-3.5 py-2.5">
-              <p className="text-xs leading-relaxed text-[#e8a19e]">{error}</p>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => input.current?.click()}
+            className="btn btn-primary"
+          >
+            Add documents
+          </button>
+          <input
+            ref={input}
+            type="file"
+            multiple
+            hidden
+            accept=".pdf,.docx,.md,.markdown,.txt,.html,.htm,.py,.ts,.tsx,.js,.jsx,.go,.rs,.java,.rb,.sql,.yaml,.yml,.json"
+            onChange={(e) => {
+              if (e.target.files) void upload(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </header>
 
-          <div className="mt-5 flex flex-col gap-1">
-            {docs.length === 0 ? (
-              <p className="py-10 text-center text-sm text-ink-ghost">
-                Nothing indexed yet.
-              </p>
-            ) : (
-              docs.map((doc, i) => (
+        {error && (
+          <div className="fade mt-6 rounded-[9px] border border-[rgba(224,115,109,0.28)] bg-[rgba(224,115,109,0.07)] px-3.5 py-2.5">
+            <p className="text-xs leading-relaxed text-[#eda6a1]">{error}</p>
+          </div>
+        )}
+
+        {uploading > 0 && (
+          <p className="mt-6 text-xs text-ink-faint">
+            Uploading {uploading} file{uploading > 1 ? "s" : ""}…
+          </p>
+        )}
+
+        <section className="mt-10">
+          {/* A table, not a card per row. At a hundred documents the card
+              layout is a scroll marathon; a dense table is scannable. */}
+          <div className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-4 border-b border-line pb-2">
+            <span className="label">Document</span>
+            <span className="label hidden sm:block">Passages</span>
+            <span className="label hidden sm:block">Size</span>
+            <span className="label">Stage</span>
+            <span />
+          </div>
+
+          {docs.length === 0 ? (
+            <Empty dragging={dragging} />
+          ) : (
+            <div className="flex flex-col">
+              {docs.map((doc) => (
                 <Row
                   key={doc.id}
                   doc={doc}
-                  index={i}
                   onDelete={async () => {
                     // Optimistic: the row is gone from the server the moment the
                     // request lands, and waiting a round trip to admit it makes
@@ -170,80 +192,61 @@ export default function CorpusPage() {
                     }
                   }}
                 />
-              ))
-            )}
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {dragging && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.5)]">
+          <div className="border-lit rounded-[14px] bg-s3 px-6 py-4 text-sm text-ink">
+            Drop to index
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function Counters({ counts }: { counts: CorpusCounts }) {
-  const cells = [
-    { label: "Documents", value: counts.documents },
-    { label: "Chunks", value: counts.chunks },
-    { label: "Indexed", value: counts.ready },
-    { label: "Failed", value: counts.failed },
-  ];
+function Empty({ dragging }: { dragging: boolean }) {
   return (
-    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-[13px] border border-line bg-line sm:grid-cols-4">
-      {cells.map((c, i) => (
-        <div key={c.label} className={`rise d${i + 1} bg-surface px-4 py-3`}>
-          <span className="label">{c.label}</span>
-          <p
-            className={`num mt-0.5 text-lg ${
-              c.label === "Failed" && c.value > 0 ? "text-danger" : "text-ink"
-            }`}
-          >
-            {c.value.toLocaleString()}
-          </p>
-        </div>
-      ))}
+    <div
+      className={`mt-4 rounded-[13px] border border-dashed px-6 py-14 text-center transition-colors duration-150 ${
+        dragging ? "border-line-lit" : "border-line-strong"
+      }`}
+    >
+      <p className="text-sm text-ink-dim">Nothing indexed yet</p>
+      <p className="mx-auto mt-1.5 max-w-sm text-2xs leading-relaxed text-ink-ghost">
+        Drop files here, or connect Slack, Notion, Drive, GitHub or Jira and let
+        them fill this in.
+      </p>
     </div>
   );
 }
 
-function Row({
-  doc,
-  index,
-  onDelete,
-}: {
-  doc: DocumentRow;
-  index: number;
-  onDelete: () => void;
-}) {
+function Row({ doc, onDelete }: { doc: DocumentRow; onDelete: () => void }) {
   const live = LIVE.includes(doc.stage);
   const stageIndex = STAGES.indexOf(doc.stage);
+  const meta = sourceMeta(doc.source_kind);
 
   return (
-    <article
-      className="rise group flex items-center gap-3 rounded-[9px] border border-line bg-surface px-3.5 py-2.5 transition-colors duration-150 hover:border-line-strong"
-      style={{ animationDelay: `${Math.min(index * 22, 200)}ms` }}
-    >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm text-ink">{doc.title}</span>
-          <span className="chip chip-muted shrink-0">{doc.kind}</span>
-        </div>
-
-        <div className="mt-1 flex items-center gap-2 text-2xs text-ink-ghost">
-          <span>{doc.source_kind}</span>
-          <span>·</span>
-          <span className="num">{formatBytes(doc.size_bytes)}</span>
-          {doc.chunk_count > 0 && (
-            <>
-              <span>·</span>
-              <span className="num">{doc.chunk_count} chunks</span>
-            </>
+    <article className="group grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-4 border-b border-line py-2.5 transition-colors duration-150 hover:bg-[rgba(255,250,240,0.018)]">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className="shrink-0 text-ink-ghost" title={doc.source_name}>
+          <meta.Glyph className="h-3.5 w-3.5" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm text-ink">{doc.title}</p>
+          {doc.error ? (
+            <p className="mt-0.5 truncate text-2xs text-[#eda6a1]">{doc.error}</p>
+          ) : (
+            <p className="mt-0.5 truncate text-2xs text-ink-ghost">
+              {doc.source_name} · {doc.kind}
+            </p>
           )}
-        </div>
-
-        {/* The pipeline rail. Segments fill as the worker advances, so a slow
-            ingest reads as progress rather than as a hang. */}
-        {live && (
-          <div className="mt-2 flex items-center gap-1.5">
-            <div className="flex flex-1 gap-px overflow-hidden rounded-full">
+          {live && (
+            <div className="mt-1.5 flex max-w-[16rem] gap-px overflow-hidden rounded-full">
               {STAGES.slice(0, -1).map((s, i) => (
                 <div
                   key={s}
@@ -251,35 +254,32 @@ function Row({
                   style={{
                     background:
                       i < stageIndex
-                        ? "var(--color-accent)"
+                        ? "var(--color-ink-faint)"
                         : i === stageIndex
-                          ? "var(--color-dense)"
-                          : "rgba(255,255,255,0.05)",
+                          ? "var(--color-accent)"
+                          : "rgba(255,250,240,0.06)",
                   }}
                 />
               ))}
             </div>
-            <span className="num w-24 shrink-0 text-2xs text-ink-faint">
-              {doc.stage}
-              {doc.stage === "embedding" && doc.progress > 0
-                ? ` ${Math.round(doc.progress * 100)}%`
-                : ""}
-            </span>
-          </div>
-        )}
-
-        {doc.error && (
-          <p className="mt-1.5 text-2xs leading-relaxed text-[#e8a19e]">{doc.error}</p>
-        )}
+          )}
+        </div>
       </div>
 
-      <StageBadge stage={doc.stage} />
+      <span className="num hidden text-2xs text-ink-faint sm:block">
+        {doc.chunk_count > 0 ? doc.chunk_count.toLocaleString() : "—"}
+      </span>
+      <span className="num hidden text-2xs text-ink-ghost sm:block">
+        {formatBytes(doc.size_bytes)}
+      </span>
+
+      <StageBadge doc={doc} />
 
       <button
         type="button"
         onClick={onDelete}
         title="Delete"
-        className="shrink-0 rounded-[5px] px-1.5 py-1 text-2xs text-ink-ghost opacity-0 transition-all duration-150 hover:bg-[rgba(217,83,79,0.1)] hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
+        className="rounded-[5px] px-1.5 py-1 text-2xs text-ink-ghost opacity-0 transition-all duration-150 hover:bg-[rgba(224,115,109,0.1)] hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
       >
         Delete
       </button>
@@ -287,23 +287,33 @@ function Row({
   );
 }
 
-function StageBadge({ stage }: { stage: Stage }) {
-  if (stage === "ready") {
+function StageBadge({ doc }: { doc: DocumentRow }) {
+  if (doc.stage === "ready") {
     return (
-      <span className="chip shrink-0 border-[rgba(78,166,122,0.3)] bg-[rgba(78,166,122,0.12)] text-[#7fc9a3]">
+      <span className="flex items-center gap-1.5 text-2xs text-ink-faint">
+        <span className="h-1.5 w-1.5 rounded-full bg-positive" />
         ready
       </span>
     );
   }
-  if (stage === "failed") {
+  if (doc.stage === "failed") {
     return (
-      <span className="chip shrink-0 border-[rgba(217,83,79,0.32)] bg-[rgba(217,83,79,0.12)] text-[#e8a19e]">
+      <span className="flex items-center gap-1.5 text-2xs text-[#eda6a1]">
+        <span className="h-1.5 w-1.5 rounded-full bg-danger" />
         failed
       </span>
     );
   }
-  if (stage === "skipped") {
-    return <span className="chip chip-muted shrink-0">unchanged</span>;
+  if (doc.stage === "skipped") {
+    return <span className="text-2xs text-ink-ghost">unchanged</span>;
   }
-  return <span className="chip chip-dense shrink-0">{stage}</span>;
+  return (
+    <span className="flex items-center gap-1.5 text-2xs text-ink-dim">
+      <span className="h-1.5 w-1.5 animate-[pulse-soft_1.4s_ease-in-out_infinite] rounded-full bg-accent" />
+      {doc.stage}
+      {doc.stage === "embedding" && doc.progress > 0
+        ? ` ${Math.round(doc.progress * 100)}%`
+        : ""}
+    </span>
+  );
 }

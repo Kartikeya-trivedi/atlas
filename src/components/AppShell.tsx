@@ -2,116 +2,221 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { AtlasMark } from "@/components/icons";
 import { api, type HealthReport } from "@/lib/api";
+import { EMPTY, chats, relativeTime } from "@/lib/chats";
 
 const NAV = [
-  { href: "/ask", label: "Ask", hint: "Retrieve and answer" },
-  { href: "/debug", label: "Debug", hint: "Inspect retrieval" },
-  { href: "/corpus", label: "Corpus", hint: "Documents and sources" },
+  { href: "/ask", label: "Ask" },
+  { href: "/connectors", label: "Connectors" },
+  { href: "/corpus", label: "Corpus" },
 ] as const;
 
 /**
- * The shell: a narrow fixed rail and one scrolling column.
+ * The shell: one fixed rail, one scrolling column.
  *
- * The rail carries the wordmark, three destinations, the channel legend, and a
- * health readout. The legend is not decoration — it teaches the colour language
- * once, on every screen, so the debugger needs no key of its own.
+ * The rail is ordered by how often you touch it — new chat, then where you are
+ * going, then where you have been. The debugger sits at the bottom with the
+ * channel legend, because it is a tool you reach for occasionally and not the
+ * point of the product.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  // The landing page carries its own nav and needs the full viewport width.
-  // Wrapping it in app chrome would frame a marketing page like a settings
-  // screen, which is exactly the wrong first impression.
+  // The landing page carries its own nav and needs the whole viewport. Framing
+  // a marketing page in app chrome makes it look like a settings screen.
   if (pathname === "/") return <>{children}</>;
 
   return (
     <div className="relative z-10 flex min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[212px] flex-col border-r border-line bg-[rgba(9,10,13,0.72)] backdrop-blur-xl md:flex">
-        <div className="flex h-14 items-center gap-2.5 px-5">
-          <Mark />
-          <span className="text-[0.9rem] font-semibold tracking-[-0.02em]">
-            Atlas
-          </span>
-        </div>
-
-        <nav className="flex flex-col gap-0.5 px-3 pt-2">
-          {NAV.map((item, i) => {
-            const active = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                title={item.hint}
-                className={`rise d${i + 1} relative flex h-8 items-center rounded-[6px] px-2.5 text-[0.8125rem] transition-colors duration-150 ${
-                  active
-                    ? "bg-[rgba(255,255,255,0.055)] text-ink"
-                    : "text-ink-dim hover:bg-[rgba(255,255,255,0.03)] hover:text-ink"
-                }`}
-              >
-                {/* Active marker: a 2px bar bleeding off the rail's left edge,
-                    rather than a filled pill. Quieter, and it survives the
-                    translucent background. */}
-                <span
-                  className={`absolute -left-3 h-4 w-[2px] rounded-r bg-accent transition-opacity duration-150 ${
-                    active ? "opacity-100" : "opacity-0"
-                  }`}
-                />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="mt-auto flex flex-col gap-4 p-4">
-          <Legend />
-          <HealthPill />
-        </div>
+      <aside className="glass fixed inset-y-0 left-0 z-20 hidden w-[240px] flex-col border-r border-line md:flex">
+        <Workspace />
+        <NewChat />
+        <Nav pathname={pathname} />
+        <History />
+        <Footer pathname={pathname} />
       </aside>
 
-      <main className="min-w-0 flex-1 md:pl-[212px]">{children}</main>
+      <main className="min-w-0 flex-1 md:pl-[240px]">{children}</main>
+    </div>
+  );
+}
+
+function Workspace() {
+  return (
+    <div className="flex h-[52px] shrink-0 items-center gap-2.5 px-4">
+      <span className="flex h-7 w-7 items-center justify-center rounded-[7px] border border-line-strong bg-s2 text-ink">
+        <AtlasMark className="h-[15px] w-[15px]" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[0.8125rem] font-medium leading-tight tracking-[-0.015em]">
+          Acme
+        </span>
+        <span className="block text-2xs leading-tight text-ink-ghost">Atlas</span>
+      </span>
+    </div>
+  );
+}
+
+function NewChat() {
+  return (
+    <div className="px-3 pb-1">
+      <Link
+        href="/ask"
+        onClick={() => chats.start()}
+        className="flex h-8 w-full items-center gap-2 rounded-[7px] border border-line-strong bg-s2 px-2.5 text-[0.8125rem] text-ink-dim shadow-[inset_0_1px_0_rgba(255,250,240,0.05)] transition-colors duration-150 hover:border-line-lit hover:bg-s3 hover:text-ink"
+      >
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
+          <path
+            d="M8 3.4v9.2M3.4 8h9.2"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+        </svg>
+        New chat
+      </Link>
+    </div>
+  );
+}
+
+function Nav({ pathname }: { pathname: string }) {
+  return (
+    <nav className="flex flex-col gap-px px-3 pt-2">
+      {NAV.map((item) => (
+        <NavLink
+          key={item.href}
+          href={item.href}
+          label={item.label}
+          active={pathname.startsWith(item.href)}
+        />
+      ))}
+    </nav>
+  );
+}
+
+function NavLink({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`relative flex h-[30px] items-center rounded-[6px] px-2.5 text-[0.8125rem] transition-colors duration-150 ${
+        active
+          ? "bg-[rgba(255,250,240,0.055)] text-ink"
+          : "text-ink-dim hover:bg-[rgba(255,250,240,0.03)] hover:text-ink"
+      }`}
+    >
+      {/* A 2px bar bleeding off the rail's left edge rather than a filled pill:
+          quieter, and it survives the translucent background. */}
+      <span
+        className={`absolute -left-3 h-3.5 w-[2px] rounded-r bg-ink transition-opacity duration-150 ${
+          active ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      {label}
+    </Link>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────── history ── */
+
+function History() {
+  const sessions = useSyncExternalStore(
+    chats.subscribe,
+    chats.snapshot,
+    () => EMPTY,
+  );
+  const activeId = useSyncExternalStore(chats.subscribe, chats.active, () => null);
+
+  return (
+    <div className="mt-5 flex min-h-0 flex-1 flex-col">
+      <span className="label px-4 pb-1.5">Recent</span>
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        {sessions.length === 0 ? (
+          <p className="px-2.5 py-2 text-2xs leading-relaxed text-ink-ghost">
+            Conversations you start show up here.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-px">
+            {sessions.map((s) => (
+              <li key={s.id} className="group relative">
+                <Link
+                  href="/ask"
+                  onClick={() => chats.select(s.id)}
+                  className={`block rounded-[6px] px-2.5 py-1.5 pr-6 transition-colors duration-150 ${
+                    s.id === activeId
+                      ? "bg-[rgba(255,250,240,0.05)]"
+                      : "hover:bg-[rgba(255,250,240,0.028)]"
+                  }`}
+                >
+                  <span
+                    className={`block truncate text-xs ${
+                      s.id === activeId ? "text-ink" : "text-ink-dim"
+                    }`}
+                  >
+                    {s.title}
+                  </span>
+                  <span className="mt-0.5 block text-2xs text-ink-ghost">
+                    {relativeTime(s.updated)}
+                  </span>
+                </Link>
+                <button
+                  type="button"
+                  aria-label={`Delete ${s.title}`}
+                  onClick={() => chats.remove(s.id)}
+                  className="absolute right-1 top-1.5 rounded-[4px] p-1 text-ink-ghost opacity-0 transition-opacity duration-150 hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden>
+                    <path
+                      d="M2.5 2.5l7 7M9.5 2.5l-7 7"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────── footer ── */
+
+function Footer({ pathname }: { pathname: string }) {
+  return (
+    <div className="shrink-0 border-t border-line px-3 py-3">
+      <NavLink href="/debug" label="Debug" active={pathname.startsWith("/debug")} />
+      <Legend />
+      <HealthPill />
     </div>
   );
 }
 
 /**
- * The wordmark: two overlapping arcs, one per channel, meeting where they fuse.
- * The product's whole thesis at 19 pixels.
+ * The channel legend lives here, next to the debugger it explains, rather than
+ * on every screen. Two colours, one sentence — that is the whole key.
  */
-function Mark() {
-  return (
-    <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden>
-      <circle
-        cx="7.6"
-        cy="10"
-        r="5.4"
-        stroke="var(--color-dense)"
-        strokeWidth="1.5"
-        opacity="0.95"
-      />
-      <circle
-        cx="12.4"
-        cy="10"
-        r="5.4"
-        stroke="var(--color-lexical)"
-        strokeWidth="1.5"
-        opacity="0.95"
-      />
-    </svg>
-  );
-}
-
 function Legend() {
   return (
-    <div className="flex flex-col gap-1.5">
-      <span className="label">Channels</span>
+    <div className="mt-2.5 flex flex-col gap-1.5 px-2.5">
       <div className="flex items-center gap-1.5">
         <span className="chip chip-dense">dense</span>
         <span className="chip chip-lexical">lexical</span>
       </div>
       <div
-        className="mt-1 h-[3px] rounded-full"
+        className="h-[3px] rounded-full"
         style={{
           background:
             "linear-gradient(90deg, var(--color-dense), var(--color-lexical))",
@@ -169,7 +274,7 @@ function HealthPill() {
   const bad = failed || (health != null && !ok);
 
   return (
-    <div className="flex flex-col gap-1 border-t border-line pt-3">
+    <div className="mt-3 flex flex-col gap-1 border-t border-line px-2.5 pt-3">
       <div className="flex items-center gap-2">
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${
@@ -177,9 +282,9 @@ function HealthPill() {
           }`}
           style={
             ok
-              ? { boxShadow: "0 0 0 3px rgba(78,166,122,0.14)" }
+              ? { boxShadow: "0 0 0 3px rgba(95,185,138,0.14)" }
               : bad
-                ? { boxShadow: "0 0 0 3px rgba(217,83,79,0.12)" }
+                ? { boxShadow: "0 0 0 3px rgba(224,115,109,0.12)" }
                 : undefined
           }
         />

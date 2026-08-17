@@ -1,50 +1,77 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Inspector } from "@/components/Inspector";
+import { SOURCES, sourceMeta, type SourceKind } from "@/components/icons";
 import {
   ApiError,
   DEFAULT_PARAMS,
+  api,
   chatStream,
   formatMs,
   type Citation,
+  type CorpusCounts,
   type RetrievalTrace,
+  type SourceRow,
 } from "@/lib/api";
+import { EMPTY, chats, type StoredTurn } from "@/lib/chats";
 
-interface Turn {
-  role: "user" | "assistant";
-  content: string;
-  citations?: Citation[];
+interface Turn extends StoredTurn {
+  /** Live only. Traces are not persisted — see lib/chats.ts. */
   trace?: RetrievalTrace | null;
-  note?: string | null;
-  cost?: number;
 }
 
-const EXAMPLES = [
-  "What changed in the authentication system in the last three releases?",
-  "Where do we still reference the deprecated /v1/auth endpoint?",
-  "Why did checkout failures increase after v4.2?",
+const SUGGESTIONS = [
+  "What did we decide about SSO session length?",
+  "Which services still call the deprecated /v1/auth endpoint?",
+  "Why did checkout failures spike after v4.2?",
 ];
 
 export default function AskPage() {
+  const activeId = useSyncExternalStore(chats.subscribe, chats.active, () => null);
+  const sessions = useSyncExternalStore(
+    chats.subscribe,
+    chats.snapshot,
+    () => EMPTY,
+  );
+
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [openTrace, setOpenTrace] = useState<RetrievalTrace | null>(null);
+  const [drawer, setDrawer] = useState<RetrievalTrace | null>(null);
 
   const abort = useRef<AbortController | null>(null);
   const tail = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
 
-  // Follow the stream, but only while the reader is already at the bottom —
-  // yanking the viewport away from someone reading an earlier answer is worse
+  // The rail owns which conversation is open. When it changes under us — a new
+  // chat, a history click — swap the transcript in. `sessions` is in the deps
+  // so a restored transcript re-reads once the store hydrates on first paint.
+  useEffect(() => {
+    if (activeId === sessionId) return;
+    setSessionId(activeId);
+    setTurns(chats.get(activeId)?.turns ?? []);
+    setDrawer(null);
+    setError(null);
+  }, [activeId, sessionId, sessions]);
+
+  // Follow the stream, but only while the reader is already at the bottom.
+  // Yanking the viewport away from someone reading an earlier answer is worse
   // than not following at all.
   useEffect(() => {
     const el = tail.current;
-    const scroller = el?.parentElement?.parentElement;
-    if (!el || !scroller) return;
-    const nearBottom =
-      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 220;
+    const box = scroller.current;
+    if (!el || !box) return;
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 240;
     if (nearBottom) el.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turns]);
 
@@ -83,8 +110,12 @@ export default function AskPage() {
           signal: controller.signal,
         })) {
           if (frame.type === "trace") {
-            patch((t) => ({ ...t, trace: frame.trace }));
-            setOpenTrace(frame.trace);
+            patch((t) => ({
+              ...t,
+              trace: frame.trace,
+              passages: frame.trace.fused.length,
+              ms: frame.trace.timings.total_ms,
+            }));
           } else if (frame.type === "delta") {
             patch((t) => ({ ...t, content: t.content + frame.text }));
           } else if (frame.type === "done") {
@@ -94,6 +125,9 @@ export default function AskPage() {
               citations: frame.citations,
               note: frame.error ?? null,
               cost: frame.cost_usd,
+              ms: t.trace
+                ? t.trace.timings.total_ms + (frame.generate_ms ?? 0)
+                : frame.generate_ms,
             }));
           } else {
             setError(frame.error);
@@ -104,8 +138,8 @@ export default function AskPage() {
           patch((t) => ({ ...t, note: "Stopped." }));
         } else {
           setError(err instanceof ApiError ? err.message : "Something went wrong.");
-          // Drop the empty assistant turn so the transcript does not keep a
-          // blank bubble where an answer never arrived.
+          // Drop the empty assistant turn rather than leaving a blank answer
+          // where one never arrived.
           setTurns((prev) =>
             prev[prev.length - 1]?.content === "" ? prev.slice(0, -1) : prev,
           );
@@ -113,85 +147,86 @@ export default function AskPage() {
       } finally {
         abort.current = null;
         setBusy(false);
+        // Persist from the settled state, so a stopped or failed turn is stored
+        // exactly as the reader last saw it.
+        setTurns((prev) => {
+          const id = chats.save(
+            sessionId,
+            prev.map(({ trace: _trace, ...rest }) => rest),
+          );
+          if (id) setSessionId(id);
+          return prev;
+        });
       }
     },
-    [busy, turns],
+    [busy, turns, sessionId],
   );
+
+  // T opens the last trace. Guarded so it does not fire inside the composer.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        el?.tagName === "TEXTAREA" ||
+        el?.tagName === "INPUT" ||
+        el?.isContentEditable === true;
+      if (typing) return;
+      if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        setDrawer((open) => {
+          if (open) return null;
+          for (let i = turns.length - 1; i >= 0; i--) {
+            const t = turns[i]?.trace;
+            if (t) return t;
+          }
+          return null;
+        });
+      }
+      if (e.key === "Escape") setDrawer(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [turns]);
 
   const empty = turns.length === 0;
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-line px-6">
-        <div>
-          <h1 className="text-[0.9rem] font-medium tracking-[-0.015em]">Ask</h1>
-          <p className="text-2xs text-ink-ghost">
-            Grounded in your corpus, cited per claim
-          </p>
-        </div>
-        {!empty && (
-          <button
-            type="button"
-            onClick={() => {
-              setTurns([]);
-              setOpenTrace(null);
-              setError(null);
-            }}
-            className="btn"
-          >
-            Clear
-          </button>
-        )}
-      </header>
-
-      <div className="flex min-h-0 flex-1">
-        <section className="flex min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-[46rem] px-6 py-8">
-              {empty ? (
-                <Welcome onPick={ask} />
-              ) : (
-                <div className="flex flex-col gap-7">
-                  {turns.map((turn, i) => (
-                    <Bubble
-                      key={i}
-                      turn={turn}
-                      streaming={busy && i === turns.length - 1}
-                      onOpenTrace={setOpenTrace}
-                    />
-                  ))}
-                </div>
-              )}
-              {error && (
-                <div className="fade mt-6 rounded-[9px] border border-[rgba(217,83,79,0.28)] bg-[rgba(217,83,79,0.07)] px-3.5 py-2.5">
-                  <p className="text-xs leading-relaxed text-[#e8a19e]">{error}</p>
-                </div>
-              )}
-              <div ref={tail} />
+    <div className="relative flex h-screen flex-col">
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[45rem] px-6 pb-44 pt-14">
+          {empty ? (
+            <Welcome onPick={(q) => void ask(q)} />
+          ) : (
+            <div className="flex flex-col gap-9">
+              {turns.map((turn, i) => (
+                <TurnView
+                  key={i}
+                  turn={turn}
+                  streaming={busy && i === turns.length - 1}
+                  onTrace={setDrawer}
+                />
+              ))}
             </div>
-          </div>
+          )}
 
-          <Composer
-            value={draft}
-            onChange={setDraft}
-            onSubmit={() => void ask(draft)}
-            onStop={() => abort.current?.abort()}
-            busy={busy}
-          />
-        </section>
-
-        <aside className="hidden w-[27rem] shrink-0 overflow-y-auto border-l border-line bg-[rgba(9,10,13,0.4)] p-4 xl:block">
-          <div className="mb-3 flex items-baseline justify-between">
-            <span className="label">Retrieval trace</span>
-            {openTrace && (
-              <span className="num text-2xs text-ink-ghost">
-                {formatMs(openTrace.timings.total_ms)}
-              </span>
-            )}
-          </div>
-          <Inspector trace={openTrace} />
-        </aside>
+          {error && (
+            <div className="fade mt-7 rounded-[9px] border border-[rgba(224,115,109,0.28)] bg-[rgba(224,115,109,0.07)] px-3.5 py-2.5">
+              <p className="text-xs leading-relaxed text-[#eda6a1]">{error}</p>
+            </div>
+          )}
+          <div ref={tail} />
+        </div>
       </div>
+
+      <Composer
+        value={draft}
+        onChange={setDraft}
+        onSubmit={() => void ask(draft)}
+        onStop={() => abort.current?.abort()}
+        busy={busy}
+      />
+
+      <TraceDrawer trace={drawer} onClose={() => setDrawer(null)} />
     </div>
   );
 }
@@ -199,185 +234,311 @@ export default function AskPage() {
 /* ────────────────────────────────────────────────────────────── welcome ── */
 
 function Welcome({ onPick }: { onPick: (q: string) => void }) {
+  const [counts, setCounts] = useState<CorpusCounts | null>(null);
+  const [sources, setSources] = useState<SourceRow[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void api
+      .documents()
+      .then((r) => {
+        if (alive) setCounts(r.counts);
+      })
+      .catch(() => {});
+    void api
+      .sources()
+      .then((r) => {
+        if (alive) setSources(r.sources);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const scope =
+    counts && sources && sources.length > 0
+      ? `Ask across ${sources.length} ${
+          sources.length === 1 ? "source" : "sources"
+        } · ${counts.chunks.toLocaleString()} indexed passages`
+      : "Nothing connected yet";
+
   return (
-    <div className="flex flex-col items-start pt-10">
-      <div
-        className="rise h-[3px] w-16 rounded-full"
-        style={{
-          background:
-            "linear-gradient(90deg, var(--color-dense), var(--color-lexical))",
-        }}
-      />
-      <h2 className="rise d1 mt-5 text-[1.6rem] font-semibold leading-[1.2] tracking-[-0.03em]">
-        Two retrievers,
-        <br />
-        one answer you can audit.
-      </h2>
-      <p className="rise d2 mt-3 max-w-md text-sm leading-relaxed text-ink-dim">
-        A vector search finds what you meant. A keyword search finds what you
-        typed. Every claim below carries the passage it came from, and the trace
-        shows which channel earned it.
+    <div className="pt-6">
+      <p className="rise label">{scope}</p>
+      <h1 className="rise d1 display mt-4 text-[2.6rem] text-ink">
+        Ask your company <span className="accent">anything</span>.
+      </h1>
+      <p className="rise d2 mt-4 max-w-lg text-base leading-relaxed text-ink-dim">
+        Every answer carries the passages it came from, and only reaches
+        documents you are allowed to see.
       </p>
 
-      <div className="mt-8 flex w-full flex-col gap-1.5">
-        <span className="rise d3 label mb-1">Try</span>
-        {EXAMPLES.map((example, i) => (
+      <div className="rise d3 mt-9 flex flex-col gap-1.5">
+        {SUGGESTIONS.map((q) => (
           <button
-            key={example}
+            key={q}
             type="button"
-            onClick={() => onPick(example)}
-            className={`rise d${i + 3} group flex items-center gap-2.5 rounded-[8px] border border-line bg-surface px-3.5 py-2.5 text-left text-sm text-ink-dim transition-all duration-150 hover:border-line-strong hover:bg-raised hover:text-ink`}
+            onClick={() => onPick(q)}
+            className="surface surface-hover group flex items-center gap-3 px-3.5 py-3 text-left text-sm text-ink-dim"
           >
-            <span className="h-1 w-1 shrink-0 rounded-full bg-ink-ghost transition-colors group-hover:bg-accent" />
-            {example}
+            <span className="h-1 w-1 shrink-0 rounded-full bg-ink-ghost transition-colors duration-150 group-hover:bg-ink-dim" />
+            <span className="group-hover:text-ink">{q}</span>
+            <span className="ml-auto shrink-0 text-2xs text-ink-ghost opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+              ↵
+            </span>
           </button>
         ))}
+      </div>
+
+      {sources != null && <ConnectedRow sources={sources} />}
+    </div>
+  );
+}
+
+function ConnectedRow({ sources }: { sources: SourceRow[] }) {
+  const connected = new Set(sources.map((s) => s.kind));
+  const shown: SourceKind[] = ["gdrive", "notion", "slack", "github", "upload"];
+
+  return (
+    <div className="mt-10 border-t border-line pt-5">
+      <div className="flex flex-wrap items-center gap-2">
+        {shown.map((kind) => {
+          const meta = SOURCES[kind];
+          const on = connected.has(kind);
+          return (
+            <span
+              key={kind}
+              className={`flex items-center gap-1.5 rounded-[6px] border px-2 py-1 text-2xs ${
+                on
+                  ? "border-line-strong bg-s2 text-ink-dim"
+                  : "border-line text-ink-ghost"
+              }`}
+              title={meta.blurb}
+            >
+              <meta.Glyph className="h-3.5 w-3.5" />
+              {meta.label}
+              {!meta.live && <span className="chip chip-soon ml-0.5">Soon</span>}
+            </span>
+          );
+        })}
+        <Link
+          href="/connectors"
+          className="text-2xs text-ink-faint underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink"
+        >
+          Manage connectors
+        </Link>
       </div>
     </div>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────── bubble ── */
+/* ───────────────────────────────────────────────────────────────── turn ── */
 
-function Bubble({
+function TurnView({
   turn,
   streaming,
-  onOpenTrace,
+  onTrace,
 }: {
   turn: Turn;
   streaming: boolean;
-  onOpenTrace: (t: RetrievalTrace | null) => void;
+  onTrace: (t: RetrievalTrace | null) => void;
 }) {
   if (turn.role === "user") {
     return (
       <div className="rise flex justify-end">
-        <p className="max-w-[85%] rounded-[11px] rounded-br-[4px] border border-line-strong bg-raised px-3.5 py-2.5 text-sm">
+        <p className="max-w-[82%] rounded-[12px] rounded-br-[4px] border border-line-strong bg-s2 px-3.5 py-2.5 text-sm shadow-[inset_0_1px_0_rgba(255,250,240,0.05)]">
           {turn.content}
         </p>
       </div>
     );
   }
 
+  // No bubble on the assistant side. The answer is set as prose on the page
+  // ground — a wall of text in a box reads like a receipt, not a reply.
   return (
-    <div className="rise flex flex-col gap-3">
-      <div className="text-base leading-[1.7] text-ink">
-        <Prose text={turn.content} citations={turn.citations} />
-        {streaming && <span className="caret" />}
-      </div>
+    <div className="rise flex flex-col gap-4">
+      {streaming && !turn.content && <Activity passages={turn.passages} />}
+
+      {turn.content && (
+        <div className="text-prose text-ink">
+          <Prose text={turn.content} citations={turn.citations} />
+          {streaming && <span className="caret" />}
+        </div>
+      )}
 
       {turn.note && <p className="text-2xs text-warn">{turn.note}</p>}
 
-      {turn.citations && turn.citations.length > 0 && (
-        <Sources citations={turn.citations} />
+      {!streaming && turn.citations && turn.citations.length > 0 && (
+        <SourceCards citations={turn.citations} />
       )}
 
-      {!streaming && turn.trace && (
-        <button
-          type="button"
-          onClick={() => onOpenTrace(turn.trace ?? null)}
-          className="flex items-center gap-2 self-start text-2xs text-ink-ghost transition-colors hover:text-ink-dim"
-        >
-          <span
-            className="h-[3px] w-8 rounded-full"
-            style={{
-              background:
-                "linear-gradient(90deg, var(--color-dense), var(--color-lexical))",
-            }}
-          />
-          {turn.trace.fused.length} passages ·{" "}
-          {formatMs(turn.trace.timings.total_ms)}
-          {turn.cost != null && turn.cost > 0 && ` · $${turn.cost.toFixed(4)}`}
-        </button>
+      {!streaming && (turn.passages != null || turn.ms != null) && (
+        <div className="flex items-center gap-2 text-2xs text-ink-ghost">
+          {turn.passages != null && <span>{turn.passages} passages</span>}
+          {turn.ms != null && (
+            <>
+              <span>·</span>
+              <span className="num">{formatMs(turn.ms)}</span>
+            </>
+          )}
+          {turn.cost != null && turn.cost > 0 && (
+            <>
+              <span>·</span>
+              <span className="num">${turn.cost.toFixed(4)}</span>
+            </>
+          )}
+          {turn.trace && (
+            <>
+              <span>·</span>
+              <button
+                type="button"
+                onClick={() => onTrace(turn.trace ?? null)}
+                className="underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink-dim"
+              >
+                trace
+              </button>
+            </>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
 /**
- * Renders the answer with [n] markers turned into clickable chips.
+ * What retrieval is doing, before there is anything to read.
  *
- * Markers with no matching citation are left visible and coloured as an error
- * rather than silently swallowed: a model that writes [7] when six passages
- * were retrieved should be obviously wrong, not quietly tidied up.
+ * A spinner says "wait"; this says "I searched, and found six passages", which
+ * is both a progress bar and the first half of the answer's evidence.
  */
-function Prose({ text, citations }: { text: string; citations?: Citation[] }) {
-  if (!text) return null;
-  const byMarker = new Map((citations ?? []).map((c) => [c.marker, c]));
+function Activity({ passages }: { passages?: number }) {
+  const text =
+    passages == null
+      ? "Searching Drive, Notion, Slack and GitHub…"
+      : `Reading ${passages} passage${passages === 1 ? "" : "s"}…`;
 
   return (
-    <>
-      {text.split(/(\[\d{1,2}\])/g).map((part, i) => {
-        const match = /^\[(\d{1,2})\]$/.exec(part);
-        if (!match) {
-          return (
-            <span key={i} className="whitespace-pre-wrap">
-              {part}
-            </span>
-          );
-        }
-        const marker = Number(match[1]);
-        const citation = byMarker.get(marker);
-        if (!citation) {
-          return (
-            <span key={i} className="text-danger" title="No such passage">
-              {part}
-            </span>
-          );
-        }
-        return (
-          <a
-            key={i}
-            href={`#cite-${marker}`}
-            className="cite"
-            title={`${citation.document_title}${citation.page ? ` · p.${citation.page}` : ""}`}
-          >
-            {marker}
-          </a>
-        );
-      })}
-    </>
-  );
-}
-
-function Sources({ citations }: { citations: Citation[] }) {
-  return (
-    <div className="flex flex-col gap-1.5 border-t border-line pt-3">
-      <span className="label">Sources</span>
-      {citations.map((c) => (
-        <div
-          key={c.marker}
-          id={`cite-${c.marker}`}
-          className="flex scroll-mt-6 gap-2.5 rounded-[7px] border border-line bg-surface px-2.5 py-2"
-        >
-          <span className="cite mt-px shrink-0 cursor-default">{c.marker}</span>
-          <div className="min-w-0">
-            <p className="truncate text-xs text-ink">
-              {c.document_title}
-              {c.page != null && (
-                <span className="num ml-1.5 text-ink-ghost">p.{c.page}</span>
-              )}
-            </p>
-            <p className="mt-0.5 line-clamp-2 text-2xs leading-snug text-ink-faint">
-              {c.snippet}
-            </p>
-          </div>
-          {c.document_uri && (
-            <a
-              href={c.document_uri}
-              target="_blank"
-              rel="noreferrer"
-              className="ml-auto shrink-0 self-center text-2xs text-ink-ghost transition-colors hover:text-accent"
-            >
-              open ↗
-            </a>
-          )}
-        </div>
-      ))}
+    <div className="flex items-center gap-2.5">
+      <span className="flex h-4 w-4 items-center justify-center">
+        <span className="h-1.5 w-1.5 animate-[pulse-soft_1.4s_ease-in-out_infinite] rounded-full bg-ink-faint" />
+      </span>
+      <span className="shimmer text-sm">{text}</span>
     </div>
   );
 }
 
-/* ────────────────────────────────────────────────────────────── composer ── */
+/* ──────────────────────────────────────────────────────────────── prose ── */
+
+/**
+ * Renders the answer, turning [n] markers into source chips.
+ *
+ * A marker with no matching citation stays visible and turns red rather than
+ * being quietly swallowed: a model that writes [7] when six passages were
+ * retrieved should be obviously wrong, not tidied up.
+ */
+function Prose({ text, citations }: { text: string; citations?: Citation[] }) {
+  if (!text) return null;
+  const byMarker = new Map((citations ?? []).map((c) => [c.marker, c]));
+  const blocks = text.split(/\n{2,}/);
+
+  return (
+    <>
+      {blocks.map((block, b) => (
+        <p key={b} className="mb-4 whitespace-pre-wrap last:mb-0">
+          {block.split(/(\[\d{1,2}\])/g).map((part, i) => {
+            const match = /^\[(\d{1,2})\]$/.exec(part);
+            if (!match) return <span key={i}>{part}</span>;
+
+            const marker = Number(match[1]);
+            const citation = byMarker.get(marker);
+            if (!citation) {
+              return (
+                <span key={i} className="text-danger" title="No such passage">
+                  {part}
+                </span>
+              );
+            }
+            return <CiteChip key={i} citation={citation} />;
+          })}
+        </p>
+      ))}
+    </>
+  );
+}
+
+function CiteChip({ citation }: { citation: Citation }) {
+  const meta = sourceMeta(citation.source_kind);
+  return (
+    <span className="group relative inline-block align-baseline">
+      <a href={`#cite-${citation.marker}`} className="cite">
+        <meta.Glyph className="h-3 w-3 shrink-0 opacity-70" />
+        <span className="truncate">{citation.document_title}</span>
+      </a>
+      {/* The popover answers "is this citation any good?" without a page jump. */}
+      <span className="pointer-events-none absolute bottom-full left-0 z-30 mb-1.5 hidden w-72 flex-col gap-1 rounded-[9px] border border-line-strong bg-s3 p-2.5 shadow-[0_12px_28px_rgba(0,0,0,0.55)] group-hover:flex">
+        <span className="flex items-center gap-1.5 text-2xs text-ink-faint">
+          <meta.Glyph className="h-3 w-3" />
+          {meta.label}
+          {citation.page != null && <span className="num">· p.{citation.page}</span>}
+        </span>
+        <span className="line-clamp-4 text-xs leading-relaxed text-ink-dim">
+          {citation.snippet}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Sources as a horizontal row, not a bibliography.
+ *
+ * Reading order matters: the eye should sweep the sources once and stop, then
+ * return to the answer. A vertical list invites reading all of them.
+ */
+function SourceCards({ citations }: { citations: Citation[] }) {
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1">
+      {citations.map((c) => {
+        const meta = sourceMeta(c.source_kind);
+        const inner = (
+          <>
+            <span className="flex items-center gap-1.5 text-2xs text-ink-faint">
+              <meta.Glyph className="h-3.5 w-3.5" />
+              {meta.label}
+              {c.page != null && <span className="num ml-auto">p.{c.page}</span>}
+            </span>
+            <span className="truncate text-xs text-ink">{c.document_title}</span>
+            <span className="line-clamp-2 text-2xs leading-snug text-ink-ghost">
+              {c.snippet}
+            </span>
+          </>
+        );
+        const cls =
+          "surface surface-hover flex w-[13.5rem] shrink-0 scroll-mt-8 flex-col gap-1.5 p-2.5";
+
+        return c.document_uri ? (
+          <a
+            key={c.marker}
+            id={`cite-${c.marker}`}
+            href={c.document_uri}
+            target="_blank"
+            rel="noreferrer"
+            className={cls}
+          >
+            {inner}
+          </a>
+        ) : (
+          <div key={c.marker} id={`cite-${c.marker}`} className={cls}>
+            {inner}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────── composer ── */
 
 function Composer({
   value,
@@ -394,8 +555,8 @@ function Composer({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
-  // Grow with the content up to a ceiling, then scroll. Reset the height first,
-  // or the box can only ever get taller.
+  // Grow with the content up to a ceiling. Reset the height first, or the box
+  // can only ever get taller.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -403,46 +564,165 @@ function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
   }, [value]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        ref.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
-    <div className="shrink-0 border-t border-line bg-[rgba(9,10,13,0.6)] px-6 py-4 backdrop-blur-xl">
-      <div className="mx-auto w-full max-w-[46rem]">
-        <div className="flex items-end gap-2 rounded-[11px] border border-line-strong bg-void p-2 transition-colors focus-within:border-accent">
-          <textarea
-            ref={ref}
-            rows={1}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={(e) => {
-              // Enter sends, Shift+Enter breaks — the convention for a box that
-              // is usually one line and occasionally several.
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSubmit();
-              }
-            }}
-            placeholder="Ask your corpus…"
-            className="max-h-[168px] flex-1 resize-none bg-transparent px-1.5 py-1 text-sm leading-relaxed text-ink outline-none placeholder:text-ink-ghost"
-          />
-          {busy ? (
-            <button type="button" onClick={onStop} className="btn shrink-0">
-              Stop
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={!value.trim()}
-              className="btn btn-primary shrink-0"
-            >
-              Ask
-            </button>
-          )}
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-6 pb-6">
+      <div className="pointer-events-auto mx-auto w-full max-w-[45rem]">
+        <div className="border-lit glass relative rounded-[14px] shadow-[0_18px_44px_rgba(0,0,0,0.55)]">
+          <div className="flex items-end gap-2 p-2">
+            <textarea
+              ref={ref}
+              rows={1}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  onSubmit();
+                }
+              }}
+              placeholder="Ask across Drive, Notion, Slack…"
+              className="max-h-[168px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm leading-relaxed text-ink outline-none placeholder:text-ink-ghost"
+            />
+            {busy ? (
+              <button type="button" onClick={onStop} className="btn shrink-0">
+                Stop
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSubmit}
+                disabled={!value.trim()}
+                className="btn btn-primary shrink-0"
+              >
+                Ask
+              </button>
+            )}
+          </div>
+
+          <ScopeBar />
         </div>
-        <p className="mt-2 text-center text-2xs text-ink-ghost">
-          Answers are grounded in your corpus. Every claim carries the passage it
-          came from.
-        </p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * What the question will actually reach.
+ *
+ * These are indicators, not filters: `/chat` has no per-source scope parameter
+ * yet, so a chip that looked clickable would be a lie. Sources with no
+ * connector at all say Soon and link to where you would add one.
+ */
+function ScopeBar() {
+  const [kinds, setKinds] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void api
+      .sources()
+      .then((r) => {
+        if (alive) setKinds(new Set(r.sources.map((s) => s.kind)));
+      })
+      .catch(() => {
+        if (alive) setKinds(new Set());
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const shown: SourceKind[] = ["gdrive", "notion", "slack", "github", "upload"];
+
+  return (
+    <div className="flex items-center gap-1.5 border-t border-line px-3 py-1.5">
+      <span className="text-2xs text-ink-ghost">Searching</span>
+      {shown.map((kind) => {
+        const meta = SOURCES[kind];
+        const on = kinds?.has(kind) ?? false;
+        return meta.live ? (
+          <span
+            key={kind}
+            title={on ? `${meta.label} · connected` : `${meta.label} · not connected`}
+            className={`flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-2xs transition-colors ${
+              on ? "bg-[rgba(255,250,240,0.05)] text-ink-dim" : "text-ink-ghost"
+            }`}
+          >
+            <meta.Glyph className="h-3 w-3" />
+            {meta.label}
+          </span>
+        ) : (
+          <Link
+            key={kind}
+            href="/connectors"
+            title={`${meta.label} — connector not built yet`}
+            className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-2xs text-ink-ghost transition-colors hover:text-ink-faint"
+          >
+            <meta.Glyph className="h-3 w-3 opacity-50" />
+            {meta.label}
+            <span className="opacity-60">Soon</span>
+          </Link>
+        );
+      })}
+      <span className="ml-auto hidden text-2xs text-ink-ghost sm:inline">
+        <span className="num">⌘K</span> to focus
+      </span>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────── drawer ── */
+
+/**
+ * The debugger, demoted.
+ *
+ * It used to own a third of the screen on every question. It is a power tool:
+ * one link per answer, `T` from anywhere, and it slides over rather than
+ * pushing the conversation around.
+ */
+function TraceDrawer({
+  trace,
+  onClose,
+}: {
+  trace: RetrievalTrace | null;
+  onClose: () => void;
+}) {
+  if (!trace) return null;
+
+  return (
+    <div className="fixed inset-0 z-40">
+      <button
+        type="button"
+        aria-label="Close trace"
+        onClick={onClose}
+        className="absolute inset-0 bg-[rgba(0,0,0,0.5)] backdrop-blur-[2px]"
+      />
+      <aside className="fade absolute inset-y-0 right-0 flex w-full max-w-[32rem] flex-col border-l border-line-strong bg-bg shadow-[-24px_0_60px_rgba(0,0,0,0.6)]">
+        <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-line px-4">
+          <div className="flex items-baseline gap-2.5">
+            <span className="text-sm font-medium">Retrieval trace</span>
+            <span className="num text-2xs text-ink-ghost">
+              {formatMs(trace.timings.total_ms)}
+            </span>
+          </div>
+          <button type="button" onClick={onClose} className="btn h-7 px-2">
+            Close
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <Inspector trace={trace} />
+        </div>
+      </aside>
     </div>
   );
 }
