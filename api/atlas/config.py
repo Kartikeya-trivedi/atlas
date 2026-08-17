@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
     notion_token: str | None = Field(default=None, alias="NOTION_TOKEN")
     slack_bot_token: str | None = Field(default=None, alias="SLACK_BOT_TOKEN")
+    # Drive is OAuth, not a static key: the per-source refresh token lives on
+    # the source, and these identify the app that token was issued to.
+    google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str | None = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
     jira_base_url: str | None = Field(default=None, alias="JIRA_BASE_URL")
     jira_email: str | None = Field(default=None, alias="JIRA_EMAIL")
     jira_api_token: str | None = Field(default=None, alias="JIRA_API_TOKEN")

@@ -200,6 +200,27 @@ async def set_source_cursor(source_id: UUID, cursor: dict[str, Any]) -> None:
 # ─────────────────────────────────────────────────────────────────  documents ──
 
 
+async def put_blob(document_id: UUID, data: bytes, mime: str) -> None:
+    """Parks binary content for the ingest handler to pick up.
+
+    Only used by connectors that pull files rather than text — Drive PDFs, for
+    instance. The handler deletes the row once chunks exist, so this table is a
+    hand-off buffer and never a store.
+    """
+    await db.execute(
+        """
+        insert into document_blobs (document_id, bytes, mime)
+        values ($1, $2, $3)
+        on conflict (document_id) do update
+          set bytes = excluded.bytes,
+              mime = excluded.mime
+        """,
+        document_id,
+        data,
+        mime,
+    )
+
+
 async def upsert_document(
     *,
     tenant_id: UUID,

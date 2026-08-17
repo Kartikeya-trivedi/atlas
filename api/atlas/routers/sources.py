@@ -28,13 +28,31 @@ class CreateSource(BaseModel):
     acl_public: bool = False
 
 
+#: Config keys that hold a credential. Matched as substrings, so a connector
+#: that invents `oauth_client_secret` tomorrow is covered without an edit here.
+#: The failure mode of this list is leaking a secret, so it errs wide.
+_SECRET_HINTS = ("token", "secret", "password", "key", "credential")
+
+
+def _is_secret(key: str) -> bool:
+    return any(hint in key.lower() for hint in _SECRET_HINTS)
+
+
 def _public(source: dict[str, Any]) -> dict[str, Any]:
-    """`config` can hold a token. It never leaves the server."""
+    """`config` holds credentials. They never leave the server.
+
+    Connectors name them differently — GitHub and Slack use `token`, Drive uses
+    `refresh_token` and `client_secret` — so this filters on shape rather than
+    on a fixed list of names.
+    """
     config = source.get("config") or {}
     return {
         **{k: v for k, v in source.items() if k != "config"},
-        "config": {k: v for k, v in config.items() if k != "token"},
-        "has_token": bool(config.get("token")),
+        "config": {k: v for k, v in config.items() if not _is_secret(k)},
+        # Which credentials exist, so the UI can say "token set" without ever
+        # holding one.
+        "credentials": sorted(k for k, v in config.items() if _is_secret(k) and v),
+        "has_token": any(_is_secret(k) and v for k, v in config.items()),
     }
 
 

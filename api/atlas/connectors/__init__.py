@@ -43,11 +43,18 @@ async def enqueue_document(
     title: str,
     kind: str,
     text: str | None = None,
+    data: bytes | None = None,
+    mime: str | None = None,
     uri: str | None = None,
     metadata: dict[str, Any] | None = None,
     priority: int = 200,
 ) -> None:
     """Upserts the document row and schedules its ingest.
+
+    Text rides on the job payload; bytes do not — a 20 MB PDF inline in a job
+    row would be read back on every queue poll. Binary documents go to
+    `document_blobs` instead, which the ingest handler already reads and then
+    deletes once the chunks exist.
 
     The dedupe key collapses duplicate work: re-syncing while an ingest for the
     same document is still queued must not enqueue a second one.
@@ -63,6 +70,8 @@ async def enqueue_document(
         acl_public=source["default_acl_public"],
         metadata=metadata or {},
     )
+    if data is not None:
+        await repo.put_blob(document["id"], data, mime or "application/octet-stream")
     await queue.enqueue(
         kind="ingest_document",
         tenant_id=tenant_id,
@@ -155,12 +164,20 @@ class WebConnector:
 def _registry() -> dict[str, Connector]:
     # Imported lazily so a connector with a heavy or optional dependency cannot
     # break the worker's startup for sources nobody is using.
+    from atlas.connectors.gdrive import DriveConnector
     from atlas.connectors.github import GitHubConnector
+    from atlas.connectors.jira import JiraConnector
+    from atlas.connectors.notion import NotionConnector
+    from atlas.connectors.slack import SlackConnector
 
     return {
         "upload": UploadConnector(),
         "web": WebConnector(),
         "github": GitHubConnector(),
+        "slack": SlackConnector(),
+        "notion": NotionConnector(),
+        "gdrive": DriveConnector(),
+        "jira": JiraConnector(),
     }
 
 
