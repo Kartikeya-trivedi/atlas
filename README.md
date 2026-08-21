@@ -41,8 +41,8 @@ a slot in the shortlist and silently reduce recall for the rows the user *can*
 see. There is no path through `hybrid_search()` that ranks a row the caller may
 not read.
 
-Seed the demo tenant and ask the same question as `alice@acme.test` and
-`carol@acme.test`: different corpora, same query, visible in the trace.
+Seed the demo tenant and ask the same question as `alice@acme.example` and
+`carol@acme.example`: different corpora, same query, visible in the trace.
 
 ---
 

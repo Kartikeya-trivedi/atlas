@@ -41,6 +41,12 @@ async def get_tenant_by_slug(slug: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def get_tenant(tenant_id: UUID) -> dict[str, Any] | None:
+    """By id, for callers that hold a Principal rather than a slug."""
+    row = await db.fetchrow("select * from tenants where id = $1", tenant_id)
+    return dict(row) if row else None
+
+
 async def ensure_tenant(slug: str, name: str) -> UUID:
     return await db.fetchval(
         """
@@ -124,6 +130,62 @@ async def load_principal(tenant_slug: str, email: str) -> Principal | None:
         email=row["email"],
         groups=list(row["groups"]),
         is_admin=row["is_admin"],
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────  auth ──
+
+
+async def find_accounts_by_email(email: str) -> list[dict[str, Any]]:
+    """Every workspace holding this address.
+
+    Sign-in asks for an email and a password, not a workspace slug — nobody
+    remembers the slug. `(tenant_id, email)` is unique but email alone is not,
+    so one address can legitimately be a member of several workspaces. The route
+    resolves that by asking which one; it must never pick for the user.
+    """
+    rows = await db.fetch(
+        """
+        select u.id as user_id,
+               u.email,
+               u.password_hash,
+               t.slug as tenant_slug,
+               t.name as tenant_name
+          from users u
+          join tenants t on t.id = u.tenant_id
+         where lower(u.email) = lower($1)
+         order by t.slug
+        """,
+        email.strip(),
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_account(tenant_slug: str, email: str) -> dict[str, Any] | None:
+    row = await db.fetchrow(
+        """
+        select u.id as user_id, u.email, u.password_hash, t.slug as tenant_slug
+          from users u
+          join tenants t on t.id = u.tenant_id
+         where t.slug = $1 and lower(u.email) = lower($2)
+        """,
+        tenant_slug,
+        email.strip(),
+    )
+    return dict(row) if row else None
+
+
+async def set_password(user_id: UUID, password_hash: str) -> None:
+    await db.execute(
+        "update users set password_hash = $2 where id = $1", user_id, password_hash
+    )
+
+
+async def touch_login(user_id: UUID) -> None:
+    """Last seen. Not load-bearing, but the first thing anyone asks when an
+    account is disputed."""
+    await db.execute(
+        "update users set last_login_at = now() where id = $1", user_id
     )
 
 

@@ -15,13 +15,14 @@ from typing import Any
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from atlas import __version__
 from atlas.config import settings
 from atlas.db import close_pool, pool
 from atlas.ingest import ExtractionError
 from atlas.llm import ProviderError
-from atlas.routers import chat, documents, health, search, sources
+from atlas.routers import auth, chat, documents, health, search, sources
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,6 +68,33 @@ except Exception:  # noqa: BLE001 — /health is the diagnostic; keep it reachab
     _origins = ["http://localhost:3000", "http://localhost:3400"]
     log.exception("could not read ATLAS_CORS_ORIGINS; falling back to localhost")
 
+async def _unhandled(request: Request, call_next: Any) -> Any:
+    """Turns an unhandled exception into a JSON 500 the browser can actually see.
+
+    Starlette's own 500 is produced by ServerErrorMiddleware, which sits
+    *outside* the CORS layer — so the response carries no
+    access-control-allow-origin, the browser blocks it, and `fetch` rejects with
+    a bare network error. The frontend then reports "cannot reach the API" for a
+    server that is up and answering. Catching here, inside CORS, keeps the
+    headers on and lets the real status through.
+    """
+    try:
+        return await call_next(request)
+    except Exception:  # noqa: BLE001 — the point is that nothing escapes
+        log.exception("unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": "The server hit an unexpected error. Check the API logs.",
+                "kind": "server",
+            },
+        )
+
+
+# Order matters and is the reverse of the calls: add_middleware prepends, so the
+# last one added is outermost. CORS must be outermost, which means it is added
+# last — otherwise the handler above returns a response CORS never annotates.
+app.add_middleware(BaseHTTPMiddleware, dispatch=_unhandled)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
@@ -101,6 +129,7 @@ async def _provider_error(_: Request, exc: ProviderError) -> JSONResponse:
     )
 
 
+app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(sources.router)

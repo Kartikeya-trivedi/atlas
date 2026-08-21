@@ -97,6 +97,20 @@ class Settings(BaseSettings):
         alias="ATLAS_CORS_ORIGINS",
     )
 
+    # ── session cookie ────────────────────────────────────────────────────
+    # Defaults suit local development. A production deploy where the frontend
+    # and the API sit on genuinely different sites (vercel.app and fly.dev, say)
+    # needs samesite="none" AND secure=true — browsers drop a cross-site cookie
+    # otherwise, and the symptom is a login that appears to succeed and then
+    # 401s on the next request.
+    cookie_secure: bool = Field(default=False, alias="ATLAS_COOKIE_SECURE")
+    cookie_samesite: str = Field(default="lax", alias="ATLAS_COOKIE_SAMESITE")
+    cookie_domain: str | None = Field(default=None, alias="ATLAS_COOKIE_DOMAIN")
+
+    # Open registration is right for a demo and wrong for anything real, where
+    # the first admin is created by the seed and the rest are invited.
+    allow_signup: bool = Field(default=True, alias="ATLAS_ALLOW_SIGNUP")
+
     # ── worker ────────────────────────────────────────────────────────────
     worker_concurrency: int = Field(default=4, alias="ATLAS_WORKER_CONCURRENCY")
     worker_poll_ms: int = Field(default=1000, alias="ATLAS_WORKER_POLL_MS")

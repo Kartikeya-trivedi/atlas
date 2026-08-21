@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { AtlasMark } from "@/components/icons";
 import { api, type HealthReport } from "@/lib/api";
+import { AUTH_LOADING, auth, isPublicRoute } from "@/lib/auth";
 import { EMPTY, chats, relativeTime } from "@/lib/chats";
 
 const NAV = [
@@ -23,10 +24,40 @@ const NAV = [
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const session = useSyncExternalStore(
+    auth.subscribe,
+    auth.snapshot,
+    () => AUTH_LOADING,
+  );
 
-  // The landing page carries its own nav and needs the whole viewport. Framing
-  // a marketing page in app chrome makes it look like a settings screen.
-  if (pathname === "/") return <>{children}</>;
+  const publicRoute = isPublicRoute(pathname);
+
+  useEffect(() => {
+    if (publicRoute) return;
+    void auth.refresh();
+  }, [publicRoute, pathname]);
+
+  useEffect(() => {
+    if (publicRoute || session.status !== "out") return;
+    // Being unable to reach the API is not the same as being signed out.
+    // Bouncing to a sign-in form that also cannot reach the API just moves the
+    // confusion somewhere else; hold and say what is actually wrong.
+    if (session.offline) return;
+    // Carry the destination through, so signing in returns you to the page you
+    // actually wanted rather than dumping you at the default.
+    const next = encodeURIComponent(pathname);
+    router.replace(`/signin?next=${next}`);
+  }, [publicRoute, session.status, session.offline, pathname, router]);
+
+  // The landing page and the sign-in page carry their own chrome and need the
+  // whole viewport. Framing either in app furniture makes it look like a
+  // settings screen.
+  if (publicRoute) return <>{children}</>;
+
+  // Rendering the app for an instant before redirecting shows a flash of an
+  // empty corpus to someone who is not signed in. Hold instead.
+  if (session.status !== "in") return <Holding offline={session.offline} />;
 
   return (
     <div className="relative z-10 flex min-h-screen">
@@ -43,17 +74,54 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Shown while the session is being resolved, and if the API cannot be reached. */
+function Holding({ offline }: { offline: boolean }) {
+  if (!offline) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <span className="h-1.5 w-1.5 animate-[pulse-soft_1.2s_ease-in-out_infinite] rounded-full bg-ink-ghost" />
+      </div>
+    );
+  }
+  return (
+    <div className="flex min-h-screen items-center justify-center px-6">
+      <div className="surface max-w-sm p-5 text-center">
+        <p className="text-sm text-ink">The API is not reachable.</p>
+        <p className="mt-2 text-xs leading-relaxed text-ink-faint">
+          Start it with{" "}
+          <span className="num text-ink-dim">
+            cd api &amp;&amp; uv run uvicorn atlas.main:app --reload
+          </span>
+          , then reload this page.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function Workspace() {
+  const session = useSyncExternalStore(
+    auth.subscribe,
+    auth.snapshot,
+    () => AUTH_LOADING,
+  );
+  const user = session.user;
+
   return (
     <div className="flex h-[52px] shrink-0 items-center gap-2.5 px-4">
-      <span className="flex h-7 w-7 items-center justify-center rounded-[7px] border border-line-strong bg-s2 text-ink">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-line-strong bg-s2 text-ink">
         <AtlasMark className="h-[15px] w-[15px]" />
       </span>
-      <span className="min-w-0">
+      <span className="min-w-0 flex-1">
         <span className="block truncate text-[0.8125rem] font-medium leading-tight tracking-[-0.015em]">
-          Acme
+          {user?.tenant_name ?? user?.tenant ?? "Atlas"}
         </span>
-        <span className="block text-2xs leading-tight text-ink-ghost">Atlas</span>
+        <span
+          className="block truncate text-2xs leading-tight text-ink-ghost"
+          title={user?.email}
+        >
+          {user?.email ?? "Atlas"}
+        </span>
       </span>
     </div>
   );
@@ -200,7 +268,39 @@ function Footer({ pathname }: { pathname: string }) {
       <NavLink href="/debug" label="Debug" active={pathname.startsWith("/debug")} />
       <Legend />
       <HealthPill />
+      <SignOut />
     </div>
+  );
+}
+
+function SignOut() {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        await auth.signOut();
+        // Replace, not push: the back button must not walk into a signed-out
+        // app shell that immediately bounces again.
+        router.replace("/signin");
+      }}
+      className="mt-3 flex h-7 w-full items-center gap-2 rounded-[6px] px-2.5 text-2xs text-ink-ghost transition-colors duration-150 hover:bg-[rgba(255,250,240,0.03)] hover:text-ink-dim"
+    >
+      <svg viewBox="0 0 16 16" className="h-3 w-3" aria-hidden fill="none">
+        <path
+          d="M6.2 13.2H3.6a1.2 1.2 0 0 1-1.2-1.2V4a1.2 1.2 0 0 1 1.2-1.2h2.6M10.4 11.2 13.6 8l-3.2-3.2M13.6 8H6.2"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {busy ? "Signing out…" : "Sign out"}
+    </button>
   );
 }
 

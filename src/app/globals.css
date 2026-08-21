@@ -88,8 +88,14 @@
   --lit-soft: rgba(255, 250, 240, 0.025);
 }
 
-* {
-  border-color: var(--color-line);
+/* The default hairline for anything that declares a border without naming a
+   colour. Inside @layer base on purpose: unlayered rules outrank every layer,
+   so leaving this unlayered made it beat .btn and .field and flattened the
+   three border tiers back into one. */
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
 }
 
 html {

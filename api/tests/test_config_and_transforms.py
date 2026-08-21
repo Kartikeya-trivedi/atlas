@@ -30,7 +30,13 @@ def test_service_root_is_the_api_directory_not_the_repo() -> None:
     # mean the frontend tree has to be present for migrations to be found.
     assert SERVICE_ROOT.name == "api"
     assert MIGRATIONS_DIR == SERVICE_ROOT / "db" / "migrations"
-    assert len(list(MIGRATIONS_DIR.glob("*.sql"))) == 6
+
+    # Numbered, contiguous, applied in filename order by atlas-migrate. A gap
+    # means someone renamed one and the ledger no longer lines up.
+    names = sorted(p.name for p in MIGRATIONS_DIR.glob("*.sql"))
+    assert [n.split("_")[0] for n in names] == [
+        f"{i:03d}" for i in range(1, len(names) + 1)
+    ]
 
 
 def test_gemini_is_the_default_on_both_sides() -> None:

@@ -1,4 +1,4 @@
-"""Development seed:  python -m scripts.seed   (run from api/)
+"""Development seed:  uv run atlas-seed   (run from api/)
 
 Creates a tenant, three groups with deliberately different reach, and four users
 — so the permission filter can be *seen* working rather than taken on trust. Ask
@@ -11,13 +11,20 @@ Idempotent: safe to re-run.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 
 from atlas import repo
 from atlas.db import close_pool
+from atlas.passwords import hash_password
 
 TENANT_SLUG = "default"
 TENANT_NAME = "Acme"
+
+#: Every seeded user gets the same password, because the point of these four
+#: accounts is to switch between them quickly and watch the corpus change. It is
+#: a development fixture and the printout below says so.
+PASSWORD = os.getenv("ATLAS_SEED_PASSWORD", "atlas-demo-2026")
 
 GROUPS = {
     "engineering": "Engineering",
@@ -26,11 +33,18 @@ GROUPS = {
 }
 
 # email -> (name, groups, is_admin)
+#
+# acme.example rather than acme.test: EmailStr refuses special-use TLDs, so a
+# .test address validates nowhere and these accounts could never sign in.
 USERS: dict[str, tuple[str, list[str], bool]] = {
-    "alice@acme.test": ("Alice (engineering)", ["engineering", "public"], False),
-    "bob@acme.test": ("Bob (engineering + HR)", ["engineering", "hr", "public"], False),
-    "carol@acme.test": ("Carol (public only)", ["public"], False),
-    "admin@acme.test": ("Admin", ["engineering", "hr", "public"], True),
+    "alice@acme.example": ("Alice (engineering)", ["engineering", "public"], False),
+    "bob@acme.example": (
+        "Bob (engineering + HR)",
+        ["engineering", "hr", "public"],
+        False,
+    ),
+    "carol@acme.example": ("Carol (public only)", ["public"], False),
+    "admin@acme.example": ("Admin", ["engineering", "hr", "public"], True),
 }
 
 
@@ -43,16 +57,23 @@ async def main() -> int:
         group_ids[key] = await repo.ensure_group(tenant_id, key, name)
         print(f"group   {key}")
 
+    # Hashed once: scrypt is deliberately slow, and four identical passwords do
+    # not need four derivations.
+    password_hash = hash_password(PASSWORD)
+
     for email, (name, groups, is_admin) in USERS.items():
         user_id = await repo.ensure_user(tenant_id, email, name, is_admin)
         for key in groups:
             await repo.add_user_to_group(user_id, group_ids[key])
+        await repo.set_password(user_id, password_hash)
         flag = " [admin]" if is_admin else ""
         print(f"user    {email} -> {', '.join(groups)}{flag}")
 
     print(
-        "\nSet ATLAS_DEV_USER=alice@acme.test in .env.local to browse as Alice, "
-        "then swap the address to see the same query return a different corpus."
+        f"\nSign in at /signin with any address above, password {PASSWORD!r}.\n"
+        "Ask the same question as alice@ and as carol@ — same query, different "
+        "corpus, because the ACL sits inside the retrieval scan.\n"
+        "Set ATLAS_SEED_PASSWORD before running this to choose your own."
     )
     return 0
 

@@ -144,6 +144,32 @@ export interface SourceRow {
   created_at: string;
 }
 
+export interface AuthUser {
+  email: string;
+  tenant: string;
+  tenant_name: string | null;
+  is_admin: boolean;
+  groups: string[];
+}
+
+/** What the sign-in page needs before anyone has signed in. */
+export interface AuthConfig {
+  allow_signup: boolean;
+  /** Non-null when ATLAS_DEV_USER is set — the password form is not guarding anything. */
+  dev_user: string | null;
+  min_password: number;
+}
+
+/** One address can hold accounts in several workspaces; the caller picks. */
+export interface WorkspaceChoice {
+  slug: string;
+  name: string;
+}
+
+export type LoginResult =
+  | { ok: true; user: AuthUser }
+  | { ok: false; reason: "ambiguous"; choices: WorkspaceChoice[] };
+
 export interface HealthReport {
   ok: boolean;
   config: { ok: boolean; error?: string; providers?: Record<string, boolean> };
@@ -187,7 +213,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // than surfacing "Failed to fetch".
     throw new ApiError(
       0,
-      `Cannot reach the Atlas API at ${API}. Start it with: cd api && uvicorn atlas.main:app --reload`,
+      `Cannot reach the Atlas API at ${API}. Start it with: cd api && uv run uvicorn atlas.main:app --reload`,
       "network",
     );
   }
@@ -225,6 +251,30 @@ export const api = {
 
   deleteDocument: (id: string) =>
     request<void>(`/documents/${id}`, { method: "DELETE" }),
+
+  authConfig: () => request<AuthConfig>("/auth/config"),
+
+  /** 401 here is the normal signed-out answer, not a failure. */
+  me: () => request<AuthUser>("/auth/me"),
+
+  login: (body: { email: string; password: string; workspace?: string }) =>
+    request<LoginResult>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  signup: (body: {
+    workspace: string;
+    email: string;
+    password: string;
+    name?: string;
+  }) =>
+    request<{ ok: true; user: AuthUser }>("/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
 
   sources: () =>
     request<{ sources: SourceRow[]; kinds: string[] }>("/sources"),
