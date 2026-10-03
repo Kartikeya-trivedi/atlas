@@ -42,25 +42,123 @@ cd api && uv sync && cd ..
 tools (pytest, ruff, mypy). You never activate the virtualenv; run everything in
 `api/` through `uv run`.
 
-## 2. Create the database
+## 2. Set up Supabase
 
-1. In Supabase, create a project and **save the database password**. Supabase
-   shows it only once.
-2. Open **Connect** (top of the project page), then choose **Session pooler**.
-   Copy the URI. It looks like
-   `postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`.
+Atlas uses Supabase only as a Postgres database. It doesn't use Supabase Auth,
+the REST Data API, Storage, or the `anon` and `service_role` keys, so you won't
+need any of those. Everything below is about getting a database Atlas can
+connect to safely.
 
-> **Use the session pooler on port 5432, not the transaction pooler on 6543.**
-> The transaction pooler can send consecutive statements to different backends.
-> That breaks the migrator's advisory lock and the job queue's
-> `SELECT … FOR UPDATE SKIP LOCKED`. The failure looks like a migrate that
-> hangs, or jobs that never get claimed.
+### 2a. Create the project
 
-If your password contains `@`, `:`, `/` or `#`, URL-encode it in the URI. For
-example, `@` becomes `%40`.
+1. Sign in at [supabase.com/dashboard](https://supabase.com/dashboard) and
+   click **New project**.
+2. Choose an organization and give the project a name, for example `atlas`.
+3. **Database password:** use the generator, then copy the password into a
+   password manager straight away. Supabase won't show it again, and resetting
+   it later means updating every `DATABASE_URL` that uses it.
+4. **Region:** choose the one closest to where the API will run. For local
+   development, that's the one closest to you. Every search makes a database
+   round trip, so a distant region adds latency to every request.
+5. The **Free** plan is enough. Create the project and wait until the dashboard
+   shows it as ready, which takes a minute or two.
 
-You don't need to enable any extensions by hand. The first migration runs
-`create extension if not exists` for `vector`, `pg_trgm` and `pgcrypto`.
+### 2b. Get the connection string
+
+1. Click **Connect** at the top of the project page.
+2. Copy the **Session pooler** connection string (URI format). It looks like
+   `postgresql://postgres.<project-ref>:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:5432/postgres`.
+   Copy it from the dashboard rather than typing it, because the pooler
+   hostname varies between projects.
+3. Replace the password placeholder with your database password. If the
+   password contains `@`, `:`, `/`, `#` or `%`, URL-encode it; for example, `@`
+   becomes `%40`.
+4. Add `?sslmode=require` to the end of the URI so that the connection is always
+   encrypted.
+
+Supabase offers three ways to connect, and only two work for Atlas:
+
+| option | port | network | works for Atlas? |
+| --- | --- | --- | --- |
+| **Session pooler** | 5432 | IPv4 | **Yes. Use this one;** it works on any network. |
+| Direct connection | 5432 | IPv6 only, unless you buy the IPv4 add-on | Yes, if your machine and host support IPv6 |
+| Transaction pooler | 6543 | IPv4 | **No** |
+
+> **Why not the transaction pooler?** It can send consecutive statements to
+> different backends. That breaks the migrator's advisory lock and the job
+> queue's `SELECT … FOR UPDATE SKIP LOCKED`. The symptom is a migrate that hangs
+> or jobs that never get picked up.
+
+### 2c. Leave the extensions to the migration
+
+Atlas needs three Postgres extensions: `vector`, `pg_trgm` and `pgcrypto`. The
+first migration creates them in the `public` schema, so you don't need to do
+anything in the dashboard.
+
+> **Don't enable `vector` from Database → Extensions, and don't move it when
+> the Security Advisor suggests it.** The dashboard and the advisor both put
+> extensions in the `extensions` schema. Atlas's search function only looks in
+> `public`, so migrate succeeds, `/health` reports everything as fine, and every
+> search then fails with
+> `operator does not exist: extensions.vector <=> extensions.vector`. The
+> advisor's "Extension in Public" warnings for `vector` and `pg_trgm` are
+> expected; you can ignore them.
+
+If you already enabled `vector` from the dashboard, open the **SQL Editor** and
+run `alter extension vector set schema public;`, then continue.
+
+### 2d. Turn off the Data API
+
+Supabase can expose the tables in `public` as a REST API, and Atlas's tables
+live in `public`. The migrations turn on row-level security for those tables
+with no policies, so the API would refuse every request. Atlas doesn't use the
+Data API, though, so the safer choice is to turn it off completely:
+
+1. Go to **Integrations → Data API**
+   (`supabase.com/dashboard/project/_/integrations/data_api/overview`).
+2. Switch off **Enable Data API**.
+
+Turning it off also covers `schema_migrations`, the migrator's bookkeeping
+table, which has no row-level security. The Security Advisor may flag that
+table. With the Data API off, nothing can read it from outside.
+
+### 2e. Stay under the connection limit
+
+In session mode, Supabase limits the number of connections to the project's
+**Pool Size**, which you'll find on the Database Settings page
+(`supabase.com/dashboard/project/_/database/settings`). On small projects it is
+often 15. A client that goes over the limit is refused with
+`Max client connections reached`.
+
+The API and the worker each open up to `DATABASE_POOL_MAX` connections, and the
+default is 10, so together they can need 20. Keep
+`DATABASE_POOL_MAX × (API + worker processes)` a little below the Pool Size,
+because migrate and seed briefly need a connection too. With a Pool Size of 15
+and one API plus one worker, set `DATABASE_POOL_MAX=6` in step 3.
+
+### 2f. Know what the free plan does
+
+- **Projects pause when idle.** A free project with little database activity
+  for about a week is paused. `/health` then reports `database.ok: false` with
+  a connection error. Restore the project from the dashboard and wait until it
+  shows as active again, which can take a few minutes. Your data is kept.
+- **Resetting the password.** Use **Reset database password** on the Database
+  Settings page. Then update `DATABASE_URL` in `api/.env` and in every
+  deployment, and restart the API and the worker.
+
+### Optional: run Supabase on your own machine
+
+If you'd rather not use a hosted project during development, the Supabase CLI
+runs the same Postgres image, with pgvector included, in Docker:
+
+```bash
+npx supabase init     # creates a supabase/ folder; run it outside this repo
+npx supabase start    # needs Docker running
+```
+
+Then use `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres`.
+That is a direct connection with no pooler, so sections 2b, 2d and 2e don't
+apply. `npx supabase stop` shuts it down.
 
 ## 3. Configure the backend
 
@@ -73,7 +171,7 @@ Three values are required:
 
 | variable | value |
 | --- | --- |
-| `DATABASE_URL` | the session-pooler URI from step 2 |
+| `DATABASE_URL` | the session-pooler URI from step 2b, ending in `?sslmode=require` |
 | `GEMINI_API_KEY` | your AI Studio key |
 | `ATLAS_SESSION_SECRET` | a long random string that signs the session cookie (see below) |
 
@@ -88,7 +186,8 @@ cd api && uv run python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
 Use the second on Windows if you don't have `openssl`. Every other variable in
-`api/.env.example` has a working default.
+`api/.env.example` has a working default. The one exception: on a free Supabase
+project, also set `DATABASE_POOL_MAX=6` (see step 2e).
 
 **Optional — skip the login while developing.** If you set
 `ATLAS_DEV_USER=alice@acme.example`, every request is treated as that user and
@@ -259,7 +358,11 @@ down, and it reports which part of the setup is wrong.
 | Sign-in appears to work, then the next request returns 401 | The browser dropped a cross-site cookie | Set `ATLAS_COOKIE_SAMESITE=none` and `ATLAS_COOKIE_SECURE=true` (this requires HTTPS) |
 | `atlas-migrate` hangs, or jobs are never claimed | You're on the transaction pooler (port 6543) | Switch `DATABASE_URL` to the session pooler on port 5432 |
 | `… has changed since it was applied` | A migration file was edited after it ran | Revert the edit and put the change in a new numbered migration |
-| `extensions.vector: false` | The database can't create the extension | Enable **vector** under Supabase → Database → Extensions, then re-run `atlas-migrate` |
+| `extensions.vector: false` | Migrations haven't run, or the first one failed | Run `uv run atlas-migrate` and read the error it prints |
+| Every search fails with `operator does not exist: extensions.vector <=> extensions.vector` | `vector` is in the `extensions` schema | In the SQL Editor, run `alter extension vector set schema public;` (step 2c) |
+| `Max client connections reached` | The API and worker together are asking for more connections than the session pooler's Pool Size | Lower `DATABASE_POOL_MAX` (step 2e), or raise the Pool Size in Supabase's Database Settings |
+| `/health` shows `database.ok: false` with a timeout, and it used to work | The free project was paused for inactivity | Restore it from the Supabase dashboard and wait until it shows as active |
+| `password authentication failed` | The password in the URI is wrong or isn't URL-encoded | URL-encode any special characters, or reset the password (step 2f) |
 | Sign-in fails with `ATLAS_SESSION_SECRET is not set` | The secret is missing from `api/.env` | Generate one (step 3) and restart the API |
 | "Wrong email or password" for a seeded user | The seed hasn't run, or it ran with a different `ATLAS_SEED_PASSWORD` | Run `uv run atlas-seed` again |
 | `429 Too many attempts` | 8 failed sign-ins for that address | Wait 5 minutes, or restart the API (the counter is kept in memory) |
