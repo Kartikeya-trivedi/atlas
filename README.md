@@ -75,6 +75,10 @@ src/               Next.js frontend — landing, chat, connectors, corpus, debug
 
 ## Setup
 
+The short version is below. [docs/SETUP.md](docs/SETUP.md) is the full
+walkthrough: prerequisites, the demo users, verifying each step, connector
+credentials, production settings and troubleshooting.
+
 **1 — Supabase.** Create a project. The migrations enable `vector`, `pg_trgm`
 and `pgcrypto` themselves.
 
