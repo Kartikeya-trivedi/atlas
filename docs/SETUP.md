@@ -95,17 +95,11 @@ Atlas needs three Postgres extensions: `vector`, `pg_trgm` and `pgcrypto`. The
 first migration creates them in the `public` schema, so you don't need to do
 anything in the dashboard.
 
-> **Don't enable `vector` from Database → Extensions, and don't move it when
-> the Security Advisor suggests it.** The dashboard and the advisor both put
-> extensions in the `extensions` schema. Atlas's search function only looks in
-> `public`, so migrate succeeds, `/health` reports everything as fine, and every
-> search then fails with
-> `operator does not exist: extensions.vector <=> extensions.vector`. The
-> advisor's "Extension in Public" warnings for `vector` and `pg_trgm` are
-> expected; you can ignore them.
-
-If you already enabled `vector` from the dashboard, open the **SQL Editor** and
-run `alter extension vector set schema public;`, then continue.
+If you've already enabled `vector` from **Database → Extensions**, that's fine.
+The dashboard puts it in the `extensions` schema instead of `public`, and
+migration 009 lets Atlas's search function find it in either. The Security
+Advisor's "Extension in Public" warnings for `vector` and `pg_trgm` are
+expected, and you can ignore them.
 
 ### 2d. Turn off the Data API
 
@@ -359,7 +353,8 @@ down, and it reports which part of the setup is wrong.
 | `atlas-migrate` hangs, or jobs are never claimed | You're on the transaction pooler (port 6543) | Switch `DATABASE_URL` to the session pooler on port 5432 |
 | `… has changed since it was applied` | A migration file was edited after it ran | Revert the edit and put the change in a new numbered migration |
 | `extensions.vector: false` | Migrations haven't run, or the first one failed | Run `uv run atlas-migrate` and read the error it prints |
-| Every search fails with `operator does not exist: extensions.vector <=> extensions.vector` | `vector` is in the `extensions` schema | In the SQL Editor, run `alter extension vector set schema public;` (step 2c) |
+| Every search fails with `operator does not exist: extensions.vector <=> extensions.vector` | `vector` is in the `extensions` schema and migration 009 hasn't been applied | Run `uv run atlas-migrate` |
+| Indexing or search fails with `type "vector" does not exist` | `vector` is in a schema your connection's `search_path` doesn't include | In the SQL Editor, run `alter extension vector set schema public;` |
 | `Max client connections reached` | The API and worker together are asking for more connections than the session pooler's Pool Size | Lower `DATABASE_POOL_MAX` (step 2e), or raise the Pool Size in Supabase's Database Settings |
 | `/health` shows `database.ok: false` with a timeout, and it used to work | The free project was paused for inactivity | Restore it from the Supabase dashboard and wait until it shows as active |
 | `password authentication failed` | The password in the URI is wrong or isn't URL-encoded | URL-encode any special characters, or reset the password (step 2f) |
